@@ -1,21 +1,23 @@
 //! Window and tray popup management commands.
 
-use std::{
-    sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
-};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(target_os = "macos")]
+use std::time::Duration;
 
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::{
     auth::{load_app_settings, save_app_settings},
-    types::{DockDisplayMode, TrayDisplayMode, UsageInfo},
+    types::{DockDisplayMode, FloatingUsagePosition, TrayDisplayMode, UsageInfo},
 };
 
 /// Label of the borderless tray popup window.
 pub const TRAY_WINDOW: &str = "tray";
+pub const FLOATING_USAGE_WINDOW: &str = "floating-usage";
 pub const CLOSE_BEHAVIOR_REQUESTED_EVENT: &str = "close-behavior-requested";
 
+#[cfg(target_os = "macos")]
 static CLOSE_BEHAVIOR_PROMPT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static CLOSE_BEHAVIOR_PROMPT_ACKED: AtomicU64 = AtomicU64::new(0);
 
@@ -25,14 +27,91 @@ pub struct CloseBehaviorRequestedPayload {
     pub request_id: u64,
 }
 
-/// Receive the main app's polled usage so the tray menu can show remaining quota
-/// without doing its own fetching. The main window is the single usage poller.
+/// Forward UI-reported usage failures so other windows can preserve their last successful values.
 #[tauri::command]
 pub fn report_usage(app: AppHandle, usages: Vec<UsageInfo>) {
     #[cfg(desktop)]
     crate::tray::ingest_usage(&app, usages);
     #[cfg(not(desktop))]
     let _ = (app, usages);
+}
+
+#[tauri::command]
+pub fn get_cached_usage() -> Vec<UsageInfo> {
+    #[cfg(desktop)]
+    {
+        crate::tray::cached_usage()
+    }
+    #[cfg(not(desktop))]
+    {
+        Vec::new()
+    }
+}
+
+#[tauri::command]
+pub fn get_floating_usage_enabled() -> Option<bool> {
+    #[cfg(target_os = "windows")]
+    {
+        Some(
+            load_app_settings()
+                .map(|settings| settings.floating_usage_enabled)
+                .unwrap_or(false),
+        )
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+#[tauri::command]
+pub fn set_floating_usage_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, enabled);
+        Err("Floating usage is only available on Windows".into())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if !enabled {
+            if let Some(window) = app.get_webview_window(FLOATING_USAGE_WINDOW) {
+                if let Ok(position) = window.outer_position() {
+                    if let Ok(mut settings) = load_app_settings() {
+                        settings.floating_usage_position = Some(FloatingUsagePosition {
+                            x: position.x,
+                            y: position.y,
+                        });
+                        let _ = save_app_settings(&settings);
+                    }
+                }
+            }
+        }
+
+        let mut settings = load_app_settings().map_err(|error| error.to_string())?;
+        let previous = settings.floating_usage_enabled;
+        settings.floating_usage_enabled = enabled;
+        save_app_settings(&settings).map_err(|error| error.to_string())?;
+
+        let result = if enabled {
+            crate::tray::show_floating_usage_window(&app)
+        } else {
+            crate::tray::close_floating_usage_window(&app)
+        };
+        if let Err(error) = result {
+            settings.floating_usage_enabled = previous;
+            let _ = save_app_settings(&settings);
+            return Err(error.to_string());
+        }
+
+        Ok(enabled)
+    }
+}
+
+#[tauri::command]
+pub fn save_floating_usage_position(x: i32, y: i32) -> Result<(), String> {
+    let mut settings = load_app_settings().map_err(|error| error.to_string())?;
+    settings.floating_usage_position = Some(FloatingUsagePosition { x, y });
+    save_app_settings(&settings).map_err(|error| error.to_string())
 }
 
 /// Hide the tray popup window (called by the tray UI after an action).

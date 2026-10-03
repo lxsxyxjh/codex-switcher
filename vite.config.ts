@@ -9,12 +9,13 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
 
-  // Two HTML entries: the main app window and the system tray popup window.
+  // HTML entries for the main app, tray popup, and floating usage window.
   build: {
     rollupOptions: {
       input: {
         main: "index.html",
         tray: "tray.html",
+        floating: "floating.html",
       },
     },
   },

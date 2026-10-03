@@ -49,7 +49,7 @@ pub async fn ensure_chatgpt_tokens_fresh(account: &StoredAccount) -> Result<Stor
 pub(crate) async fn ensure_chatgpt_tokens_fresh_locked(
     account: &StoredAccount,
 ) -> Result<StoredAccount> {
-    if matches!(account.auth_data, AuthData::ApiKey { .. }) {
+    if matches!(&account.auth_data, AuthData::ApiKey { .. } | AuthData::Cookie { .. }) {
         return Ok(account.clone());
     }
 
@@ -58,7 +58,7 @@ pub(crate) async fn ensure_chatgpt_tokens_fresh_locked(
     let (current, _) = load_account_reconciling_live_auth(&account.id)?;
 
     match &current.auth_data {
-        AuthData::ApiKey { .. } => Ok(current.clone()),
+        AuthData::ApiKey { .. } | AuthData::Cookie { .. } => Ok(current.clone()),
         AuthData::ChatGPT {
             id_token,
             access_token,
@@ -75,7 +75,7 @@ pub(crate) async fn ensure_chatgpt_tokens_fresh_locked(
 
 /// Force-refresh ChatGPT OAuth tokens for an account.
 pub async fn refresh_chatgpt_tokens(account: &StoredAccount) -> Result<StoredAccount> {
-    if matches!(account.auth_data, AuthData::ApiKey { .. }) {
+    if matches!(&account.auth_data, AuthData::ApiKey { .. } | AuthData::Cookie { .. }) {
         return Ok(account.clone());
     }
 
@@ -97,7 +97,7 @@ async fn refresh_chatgpt_tokens_locked(account: &StoredAccount) -> Result<Stored
             account_id,
             ..
         } => (id_token.clone(), refresh_token.clone(), account_id.clone()),
-        AuthData::ApiKey { .. } => return Ok(current),
+        AuthData::ApiKey { .. } | AuthData::Cookie { .. } => return Ok(current),
     };
 
     if current_refresh_token.is_empty() {
@@ -207,7 +207,7 @@ pub async fn create_chatgpt_account_from_refresh_token(
 
 fn chatgpt_tokens_need_refresh(account: &StoredAccount) -> bool {
     match &account.auth_data {
-        AuthData::ApiKey { .. } => false,
+        AuthData::ApiKey { .. } | AuthData::Cookie { .. } => false,
         AuthData::ChatGPT {
             id_token,
             access_token,

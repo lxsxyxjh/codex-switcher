@@ -1,12 +1,18 @@
 //! Account management Tauri commands
 
+use crate::api::usage::{
+    cache_chatgpt_cookie_session, clear_chatgpt_cookie_session, fetch_chatgpt_cookie_session,
+    get_account_usage, normalize_chatgpt_cookie,
+};
 use crate::auth::{
     add_account, create_chatgpt_account_from_refresh_token, ensure_chatgpt_tokens_fresh_locked,
     get_active_account, import_from_auth_json, import_from_auth_json_contents, load_accounts,
     read_current_auth, remove_account, save_accounts, set_active_account, switch_to_account,
     sync_active_account_tokens, touch_account, AUTH_OPERATION_LOCK,
 };
-use crate::types::{AccountInfo, AccountsStore, AuthData, ImportAccountsSummary, StoredAccount};
+use crate::types::{
+    AccountInfo, AccountsStore, AuthData, ImportAccountsSummary, StoredAccount, UsageInfo,
+};
 
 use super::process::ensure_codex_not_running;
 
@@ -35,6 +41,7 @@ const SLIM_EXPORT_PREFIX: &str = "css1.";
 const SLIM_FORMAT_VERSION: u8 = 1;
 const SLIM_AUTH_API_KEY: u8 = 0;
 const SLIM_AUTH_CHATGPT: u8 = 1;
+const SLIM_AUTH_COOKIE: u8 = 2;
 
 const FULL_FILE_MAGIC: &[u8; 4] = b"CSWF";
 const FULL_FILE_VERSION: u8 = 1;
@@ -67,6 +74,8 @@ struct SlimAccountPayload {
     api_key: Option<String>,
     #[serde(rename = "r", skip_serializing_if = "Option::is_none")]
     refresh_token: Option<String>,
+    #[serde(default, rename = "c", skip_serializing_if = "Option::is_none")]
+    session_cookie: Option<String>,
 }
 
 /// List all accounts with their info
@@ -132,6 +141,65 @@ pub async fn add_account_from_auth_json_text(
     Ok(AccountInfo::from_stored(&stored, active_id))
 }
 
+#[derive(serde::Serialize)]
+pub struct AddedCookieAccount {
+    account: AccountInfo,
+    usage: UsageInfo,
+}
+
+/// Add a usage-only account from a ChatGPT browser session cookie.
+#[tauri::command]
+pub async fn add_account_from_cookie(
+    app: tauri::AppHandle,
+    name: String,
+    cookie: String,
+) -> Result<AddedCookieAccount, String> {
+    let cookie = normalize_chatgpt_cookie(&cookie).map_err(|error| error.to_string())?;
+    let session = fetch_chatgpt_cookie_session(&cookie)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut account = StoredAccount::new_cookie(
+        name,
+        session.email.clone(),
+        session.plan_type.clone(),
+        session.account_id.clone(),
+        cookie,
+    );
+    cache_chatgpt_cookie_session(&account.id, session);
+
+    let usage = match get_account_usage(&account).await {
+        Ok(usage) => usage,
+        Err(error) => {
+            clear_chatgpt_cookie_session(&account.id);
+            return Err(error.to_string());
+        }
+    };
+    if let Some(error) = usage.error.clone() {
+        clear_chatgpt_cookie_session(&account.id);
+        return Err(error);
+    }
+    account.plan_type = usage.plan_type.clone();
+
+    let stored = match add_account(account) {
+        Ok(stored) => stored,
+        Err(error) => {
+            clear_chatgpt_cookie_session(&usage.account_id);
+            return Err(error.to_string());
+        }
+    };
+    let store = load_accounts().map_err(|error| error.to_string())?;
+    let active_id = store.active_account_id.as_deref();
+    #[cfg(desktop)]
+    crate::tray::ingest_usage(&app, vec![usage.clone()]);
+    #[cfg(not(desktop))]
+    let _ = app;
+
+    Ok(AddedCookieAccount {
+        account: AccountInfo::from_stored(&stored, active_id),
+        usage,
+    })
+}
+
 /// Switch to a different account
 #[tauri::command]
 pub async fn switch_account(account_id: String) -> Result<(), String> {
@@ -147,6 +215,10 @@ pub async fn switch_account_by_id(account_id: &str) -> Result<(), String> {
         .iter()
         .position(|account| account.id == account_id)
         .ok_or_else(|| format!("Account not found: {account_id}"))?;
+
+    if matches!(&store.accounts[target_index].auth_data, AuthData::Cookie { .. }) {
+        return Err("Cookie accounts only provide usage and cannot switch Codex login".into());
+    }
 
     if store.active_account_id.as_deref() == Some(account_id) {
         return Ok(());
@@ -201,6 +273,7 @@ pub async fn switch_account_by_id(account_id: &str) -> Result<(), String> {
 /// Remove an account
 #[tauri::command]
 pub async fn delete_account(account_id: String) -> Result<(), String> {
+    clear_chatgpt_cookie_session(&account_id);
     remove_account(&account_id).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -377,12 +450,21 @@ fn encode_slim_payload_from_store(store: &AccountsStore) -> anyhow::Result<Strin
                 auth_type: SLIM_AUTH_API_KEY,
                 api_key: Some(key.clone()),
                 refresh_token: None,
+                session_cookie: None,
             },
             AuthData::ChatGPT { refresh_token, .. } => SlimAccountPayload {
                 name: account.name.clone(),
                 auth_type: SLIM_AUTH_CHATGPT,
                 api_key: None,
                 refresh_token: Some(refresh_token.clone()),
+                session_cookie: None,
+            },
+            AuthData::Cookie { session_cookie, .. } => SlimAccountPayload {
+                name: account.name.clone(),
+                auth_type: SLIM_AUTH_COOKIE,
+                api_key: None,
+                refresh_token: None,
+                session_cookie: Some(session_cookie.clone()),
             },
         })
         .collect();
@@ -464,6 +546,15 @@ fn validate_slim_payload(payload: &SlimPayload) -> anyhow::Result<()> {
                     anyhow::bail!("Refresh token is missing for account {}", account.name);
                 }
             }
+            SLIM_AUTH_COOKIE => {
+                if account
+                    .session_cookie
+                    .as_ref()
+                    .map_or(true, |cookie| cookie.trim().is_empty())
+                {
+                    anyhow::bail!("Cookie header is missing for account {}", account.name);
+                }
+            }
             _ => {
                 anyhow::bail!(
                     "Unsupported auth type {} for account {}",
@@ -500,12 +591,17 @@ async fn build_store_from_slim_payload(
     if let Some(active) = active_name {
         active_account_id = accounts
             .iter()
-            .find(|account| account.name == active)
+            .find(|account| {
+                account.name == active && !matches!(&account.auth_data, AuthData::Cookie { .. })
+            })
             .map(|account| account.id.clone());
     }
 
     if active_account_id.is_none() {
-        active_account_id = accounts.first().map(|a| a.id.clone());
+        active_account_id = accounts
+            .iter()
+            .find(|account| !matches!(&account.auth_data, AuthData::Cookie { .. }))
+            .map(|account| account.id.clone());
     }
 
     Ok(AccountsStore {
@@ -543,6 +639,32 @@ async fn restore_slim_accounts(
                         )
                     })?
             }
+            SLIM_AUTH_COOKIE => {
+                let cookie = normalize_chatgpt_cookie(
+                    &entry
+                        .session_cookie
+                        .context("Cookie payload is missing")?,
+                )?;
+                let session = fetch_chatgpt_cookie_session(&cookie)
+                    .await
+                    .context("Failed to restore Cookie account")?;
+                let mut account = StoredAccount::new_cookie(
+                    account_name,
+                    session.email.clone(),
+                    session.plan_type.clone(),
+                    session.account_id.clone(),
+                    cookie,
+                );
+                cache_chatgpt_cookie_session(&account.id, session);
+                let usage = get_account_usage(&account)
+                    .await
+                    .context("Failed to read usage for Cookie account")?;
+                if let Some(error) = usage.error {
+                    anyhow::bail!("Failed to read usage for Cookie account: {error}");
+                }
+                account.plan_type = usage.plan_type;
+                account
+            }
             _ => anyhow::bail!("Unsupported auth type in slim payload"),
         };
         Ok::<StoredAccount, anyhow::Error>(account)
@@ -557,7 +679,24 @@ async fn restore_slim_accounts(
 }
 
 fn encode_full_encrypted_store(store: &AccountsStore, passphrase: &str) -> anyhow::Result<Vec<u8>> {
-    let json = serde_json::to_vec(store).context("Failed to serialize account store")?;
+    let mut payload = serde_json::to_value(store).context("Failed to serialize account store")?;
+    let serialized_accounts = payload
+        .get_mut("accounts")
+        .and_then(serde_json::Value::as_array_mut)
+        .context("Serialized account store has no account list")?;
+    for (index, account) in store.accounts.iter().enumerate() {
+        if let AuthData::Cookie { session_cookie, .. } = &account.auth_data {
+            let auth_data = serialized_accounts[index]
+                .get_mut("auth_data")
+                .and_then(serde_json::Value::as_object_mut)
+                .context("Serialized Cookie account has no auth data")?;
+            auth_data.insert(
+                "session_cookie".to_string(),
+                serde_json::Value::String(session_cookie.clone()),
+            );
+        }
+    }
+    let json = serde_json::to_vec(&payload).context("Failed to serialize account store")?;
     let compressed = compress_bytes(&json).context("Failed to compress account store")?;
 
     let mut salt = [0u8; FULL_SALT_LEN];

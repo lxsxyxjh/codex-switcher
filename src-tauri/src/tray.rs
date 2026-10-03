@@ -6,7 +6,7 @@ use std::sync::{
 use std::time::Duration;
 
 use tauri::{
-    menu::{CheckMenuItemBuilder, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
+    menu::{CheckMenuItemBuilder, Menu, MenuItemBuilder, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, PhysicalPosition, Runtime, WebviewUrl, WebviewWindowBuilder,
     WindowEvent,
@@ -14,12 +14,14 @@ use tauri::{
 
 use crate::{
     api::usage::get_account_usage,
-    auth::{get_account, get_accounts_file, load_accounts, load_app_settings},
+    auth::{
+        get_account, get_accounts_file, load_accounts, load_app_settings, save_app_settings,
+    },
     commands::{
         is_codex_running_switch_block, restore_main_window, switch_account_by_id,
-        window::TRAY_WINDOW,
+        window::{FLOATING_USAGE_WINDOW, TRAY_WINDOW},
     },
-    types::{AccountsStore, TrayDisplayMode, UsageInfo},
+    types::{AccountsStore, FloatingUsagePosition, TrayDisplayMode, UsageInfo},
 };
 
 static TRAY_USAGE: LazyLock<Mutex<HashMap<String, UsageInfo>>> =
@@ -30,6 +32,7 @@ static TRAY_SWITCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const TRAY_ID: &str = "codex-switcher-tray";
 const TRAY_ICON: tauri::image::Image<'static> = tauri::include_image!("./icons/tray.png");
 const TRAY_REFRESH_EVENT: &str = "tray-refresh";
+const USAGE_UPDATED_EVENT: &str = "usage-updated";
 const ACCOUNTS_CHANGED_EVENT: &str = "accounts-changed";
 const SWITCH_ACCOUNT_BLOCKED_EVENT: &str = "switch-account-blocked";
 const ACCOUNT_ITEM_PREFIX: &str = "account:";
@@ -37,6 +40,8 @@ const OPEN_ITEM_ID: &str = "open";
 const QUIT_ITEM_ID: &str = "quit";
 const TRAY_WIDTH: f64 = 300.0;
 const TRAY_HEIGHT: f64 = 420.0;
+const FLOATING_USAGE_WIDTH: f64 = 360.0;
+const FLOATING_USAGE_HEIGHT: f64 = 48.0;
 const ACCOUNT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 #[derive(Clone, serde::Serialize)]
@@ -49,6 +54,14 @@ struct SwitchAccountBlockedPayload {
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(not(target_os = "linux"))]
     create_tray_window(app)?;
+
+    #[cfg(target_os = "windows")]
+    if load_app_settings()
+        .map(|settings| settings.floating_usage_enabled)
+        .unwrap_or(false)
+    {
+        create_floating_usage_window(app)?;
+    }
 
     let menu = build_menu(app, &load_accounts().unwrap_or_default())?;
 
@@ -215,14 +228,131 @@ fn watch_system_theme<R: Runtime>(app: AppHandle<R>) {
     });
 }
 
-/// Store usage reported by the main app and refresh the native menu labels.
+/// Store usage updates and notify the open windows and native tray menu.
 pub fn ingest_usage<R: Runtime>(app: &AppHandle<R>, usages: Vec<UsageInfo>) {
     if let Ok(mut cache) = TRAY_USAGE.lock() {
-        for usage in usages {
-            cache.insert(usage.account_id.clone(), usage);
+        for usage in &usages {
+            if usage.error.is_none() || !cache.contains_key(&usage.account_id) {
+                cache.insert(usage.account_id.clone(), usage.clone());
+            }
         }
     }
+    let _ = app.emit(USAGE_UPDATED_EVENT, &usages);
     refresh_menu(app);
+}
+
+pub fn cached_usage() -> Vec<UsageInfo> {
+    TRAY_USAGE
+        .lock()
+        .map(|cache| cache.values().cloned().collect())
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "windows")]
+pub fn show_floating_usage_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(FLOATING_USAGE_WINDOW) {
+        window.show()?;
+        window.set_always_on_top(true)?;
+        return Ok(());
+    }
+
+    create_floating_usage_window(app)
+}
+
+#[cfg(target_os = "windows")]
+pub fn close_floating_usage_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(FLOATING_USAGE_WINDOW) {
+        window.close()?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn create_floating_usage_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    if app.get_webview_window(FLOATING_USAGE_WINDOW).is_some() {
+        return Ok(());
+    }
+
+    let window = WebviewWindowBuilder::new(
+        app,
+        FLOATING_USAGE_WINDOW,
+        WebviewUrl::App("floating.html".into()),
+    )
+    .title("Codex Usage")
+    .inner_size(FLOATING_USAGE_WIDTH, FLOATING_USAGE_HEIGHT)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .visible(false)
+    .build()?;
+
+    let settings = load_app_settings().unwrap_or_default();
+    let saved_position = settings
+        .floating_usage_position
+        .map(|position| PhysicalPosition::new(position.x, position.y));
+    let position = saved_position
+        .filter(|position| floating_position_is_visible(app, *position))
+        .unwrap_or_else(|| default_floating_usage_position(app));
+    window.set_position(position)?;
+    window.show()?;
+    persist_floating_usage_position(position);
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn persist_floating_usage_position(position: PhysicalPosition<i32>) {
+    let Ok(mut settings) = load_app_settings() else {
+        return;
+    };
+    settings.floating_usage_position = Some(FloatingUsagePosition {
+        x: position.x,
+        y: position.y,
+    });
+    if let Err(error) = save_app_settings(&settings) {
+        eprintln!("Failed to save floating usage position: {error}");
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn floating_position_is_visible<R: Runtime>(
+    app: &AppHandle<R>,
+    position: PhysicalPosition<i32>,
+) -> bool {
+    app.available_monitors().unwrap_or_default().iter().any(|monitor| {
+        let monitor_position = monitor.position();
+        let monitor_size = monitor.size();
+        let scale = monitor.scale_factor();
+        let width = (FLOATING_USAGE_WIDTH * scale).ceil() as i32;
+        let height = (FLOATING_USAGE_HEIGHT * scale).ceil() as i32;
+        position.x >= monitor_position.x
+            && position.y >= monitor_position.y
+            && position.x.saturating_add(width) <= monitor_position.x + monitor_size.width as i32
+            && position.y.saturating_add(height) <= monitor_position.y + monitor_size.height as i32
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn default_floating_usage_position<R: Runtime>(app: &AppHandle<R>) -> PhysicalPosition<i32> {
+    let monitor = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| app.available_monitors().ok()?.into_iter().next());
+    let Some(monitor) = monitor else {
+        return PhysicalPosition::new(24, 24);
+    };
+
+    let position = monitor.position();
+    let size = monitor.size();
+    let scale = monitor.scale_factor();
+    let width = ((FLOATING_USAGE_WIDTH + 16.0) * scale).ceil() as i32;
+    let margin = (16.0 * scale).ceil() as i32;
+    PhysicalPosition::new(
+        position.x + size.width as i32 - width,
+        position.y + margin,
+    )
 }
 
 // ============================================================================
@@ -325,10 +455,17 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, store: &AccountsStore) -> tauri::R
         )?;
     } else {
         for account in &store.accounts {
-            let label = format!("{}{}", account.name, usage_suffix(&account.id));
+            let usage_only = matches!(&account.auth_data, crate::types::AuthData::Cookie { .. });
+            let account_name = if usage_only {
+                format!("{} (Cookie)", account.name)
+            } else {
+                account.name.clone()
+            };
+            let label = format!("{}{}", account_name, usage_suffix(&account.id));
             let item =
                 CheckMenuItemBuilder::with_id(account_menu_id(&account.id), menu_label(&label))
                     .checked(store.active_account_id.as_deref() == Some(&account.id))
+                    .enabled(!usage_only)
                     .build(app)?;
             menu.append(&item)?;
         }
@@ -705,7 +842,10 @@ fn poll_account_metadata<R: Runtime>(app: AppHandle<R>) {
             .unwrap_or_default();
 
         for account in accounts {
-            if matches!(account.auth_data, crate::types::AuthData::ApiKey { .. }) {
+            if matches!(
+                &account.auth_data,
+                crate::types::AuthData::ApiKey { .. } | crate::types::AuthData::Cookie { .. }
+            ) {
                 continue;
             }
 

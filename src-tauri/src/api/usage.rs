@@ -4,12 +4,15 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use futures::{stream, StreamExt};
 use reqwest::{
-    header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, USER_AGENT},
+    header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, COOKIE, USER_AGENT},
     StatusCode,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+};
 
 use crate::auth::{ensure_chatgpt_tokens_fresh, refresh_chatgpt_tokens};
 use crate::types::{
@@ -18,6 +21,7 @@ use crate::types::{
 };
 
 const CHATGPT_BACKEND_API: &str = "https://chatgpt.com/backend-api";
+const CHATGPT_WEB_SESSION_API: &str = "https://chatgpt.com/api/auth/session";
 const CHATGPT_ACCOUNTS_CHECK_API: &str =
     "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27";
 const CHATGPT_CODEX_RESPONSES_API: &str = "https://chatgpt.com/backend-api/codex/responses";
@@ -31,6 +35,25 @@ const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
      Chrome/136.0.0.0 Safari/537.36";
 const SESSION_WINDOW_SECONDS: i32 = 5 * 60 * 60;
 const WEEKLY_WINDOW_SECONDS: i32 = 7 * 24 * 60 * 60;
+const COOKIE_TOKEN_CACHE_SECONDS: i64 = 60 * 30;
+
+pub struct ChatGptCookieSession {
+    pub access_token: String,
+    pub email: Option<String>,
+    pub plan_type: Option<String>,
+    pub account_id: Option<String>,
+    expires_at: i64,
+}
+
+#[derive(Clone)]
+struct CachedCookieSession {
+    access_token: String,
+    account_id: Option<String>,
+    expires_at: i64,
+}
+
+static COOKIE_SESSION_CACHE: LazyLock<Mutex<HashMap<String, CachedCookieSession>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone)]
 pub struct ChatGptAccountMetadata {
@@ -82,6 +105,7 @@ pub async fn get_account_usage(account: &StoredAccount) -> Result<UsageInfo> {
             error: Some("Usage info not available for API key accounts".to_string()),
         }),
         AuthData::ChatGPT { .. } => get_usage_with_chatgpt_auth(account).await,
+        AuthData::Cookie { .. } => get_usage_with_cookie_auth(account).await,
     }
 }
 
@@ -90,6 +114,9 @@ pub async fn warmup_account(account: &StoredAccount) -> Result<()> {
     match &account.auth_data {
         AuthData::ApiKey { key } => warmup_with_api_key(key).await,
         AuthData::ChatGPT { .. } => warmup_with_chatgpt_auth(account).await,
+        AuthData::Cookie { .. } => {
+            anyhow::bail!("Cookie accounts can read usage but cannot send Codex warm-up requests")
+        }
     }
 }
 
@@ -163,6 +190,157 @@ async fn get_usage_with_chatgpt_auth(account: &StoredAccount) -> Result<UsageInf
     }
 
     parse_usage_response(&fresh_account.id, &fresh_account.name, response).await
+}
+
+pub fn normalize_chatgpt_cookie(input: &str) -> Result<String> {
+    let value = input.trim();
+    let cookie = if value
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("cookie:"))
+    {
+        &value[7..]
+    } else {
+        value
+    }
+    .trim();
+
+    if cookie.is_empty() {
+        anyhow::bail!("Paste a ChatGPT Cookie header.");
+    }
+    if cookie.starts_with("dpapi:") {
+        anyhow::bail!("This Cookie is protected for a different Windows user");
+    }
+    if cookie.len() > 32 * 1024 {
+        anyhow::bail!("The Cookie header is too large.");
+    }
+    HeaderValue::from_str(cookie).context("The Cookie header contains invalid characters")?;
+    Ok(cookie.to_string())
+}
+
+pub async fn fetch_chatgpt_cookie_session(cookie: &str) -> Result<ChatGptCookieSession> {
+    let cookie = normalize_chatgpt_cookie(cookie)?;
+    let response = reqwest::Client::new()
+        .get(CHATGPT_WEB_SESSION_API)
+        .header(COOKIE, HeaderValue::from_str(&cookie)?)
+        .header(USER_AGENT, BROWSER_USER_AGENT)
+        .header("accept", "application/json")
+        .header("origin", CHATGPT_ORIGIN)
+        .header("referer", CHATGPT_ORIGIN)
+        .send()
+        .await
+        .context("Failed to check the ChatGPT browser session")?;
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "ChatGPT rejected the Cookie header with status {}",
+            response.status()
+        );
+    }
+
+    let payload: Value = response
+        .json()
+        .await
+        .context("Failed to parse the ChatGPT browser session response")?;
+    let access_token = payload
+        .get("accessToken")
+        .or_else(|| payload.get("access_token"))
+        .or_else(|| payload.pointer("/data/accessToken"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .context("The ChatGPT session did not provide an access token")?
+        .to_string();
+
+    let claims = crate::types::parse_chatgpt_id_token_claims(&access_token);
+    let email = payload
+        .pointer("/user/email")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or(claims.email);
+    let account_id = payload
+        .get("account_id")
+        .or_else(|| payload.pointer("/account/id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or(claims.account_id);
+
+    Ok(ChatGptCookieSession {
+        access_token,
+        email,
+        plan_type: claims.plan_type,
+        account_id,
+        expires_at: Utc::now().timestamp() + COOKIE_TOKEN_CACHE_SECONDS,
+    })
+}
+
+async fn get_cookie_session(account: &StoredAccount) -> Result<CachedCookieSession> {
+    let AuthData::Cookie {
+        session_cookie,
+        account_id,
+    } = &account.auth_data
+    else {
+        anyhow::bail!("Account is not using Cookie authentication");
+    };
+
+    let now = Utc::now().timestamp();
+    if let Some(cached) = COOKIE_SESSION_CACHE
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(&account.id).cloned())
+        .filter(|cached| cached.expires_at > now)
+    {
+        return Ok(cached);
+    }
+
+    let session = fetch_chatgpt_cookie_session(session_cookie).await?;
+    let cached = CachedCookieSession {
+        access_token: session.access_token,
+        account_id: session.account_id.or_else(|| account_id.clone()),
+        expires_at: session.expires_at,
+    };
+    if let Ok(mut cache) = COOKIE_SESSION_CACHE.lock() {
+        cache.insert(account.id.clone(), cached.clone());
+    }
+    Ok(cached)
+}
+
+pub fn cache_chatgpt_cookie_session(account_id: &str, session: ChatGptCookieSession) {
+    if let Ok(mut cache) = COOKIE_SESSION_CACHE.lock() {
+        cache.insert(
+            account_id.to_string(),
+            CachedCookieSession {
+                access_token: session.access_token,
+                account_id: session.account_id,
+                expires_at: session.expires_at,
+            },
+        );
+    }
+}
+
+pub fn clear_chatgpt_cookie_session(account_id: &str) {
+    if let Ok(mut cache) = COOKIE_SESSION_CACHE.lock() {
+        cache.remove(account_id);
+    }
+}
+
+async fn get_usage_with_cookie_auth(account: &StoredAccount) -> Result<UsageInfo> {
+    let session = get_cookie_session(account).await?;
+    let mut response = send_chatgpt_usage_request(
+        &session.access_token,
+        session.account_id.as_deref(),
+    )
+    .await?;
+
+    if response.status() == StatusCode::UNAUTHORIZED {
+        clear_chatgpt_cookie_session(&account.id);
+        let refreshed_session = get_cookie_session(account).await?;
+        response = send_chatgpt_usage_request(
+            &refreshed_session.access_token,
+            refreshed_session.account_id.as_deref(),
+        )
+        .await?;
+    }
+
+    parse_usage_response(&account.id, &account.name, response).await
 }
 
 async fn parse_usage_response(
@@ -342,7 +520,9 @@ fn extract_chatgpt_auth(account: &StoredAccount) -> Result<(&str, Option<&str>)>
             account_id,
             ..
         } => Ok((access_token.as_str(), account_id.as_deref())),
-        AuthData::ApiKey { .. } => anyhow::bail!("Account is not using ChatGPT OAuth"),
+        AuthData::ApiKey { .. } | AuthData::Cookie { .. } => {
+            anyhow::bail!("Account is not using ChatGPT OAuth")
+        }
     }
 }
 
@@ -560,6 +740,17 @@ pub async fn refresh_all_usage(accounts: &[StoredAccount]) -> Vec<UsageInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalizes_a_cookie_header_prefix() {
+        assert_eq!(normalize_chatgpt_cookie("  cOoKiE: a=b; x=y  ").unwrap(), "a=b; x=y");
+    }
+
+    #[test]
+    fn rejects_empty_and_multiline_cookie_headers() {
+        assert!(normalize_chatgpt_cookie("  ").is_err());
+        assert!(normalize_chatgpt_cookie("a=b\r\nAuthorization: x").is_err());
+    }
 
     fn rate_limit_window(used_percent: f64, window_seconds: i32) -> RateLimitWindow {
         RateLimitWindow {

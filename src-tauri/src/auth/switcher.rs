@@ -77,6 +77,9 @@ fn create_auth_json(account: &StoredAccount) -> Result<AuthDotJson> {
             }),
             last_refresh: Some(Utc::now()),
         }),
+        AuthData::Cookie { .. } => {
+            anyhow::bail!("Cookie accounts are for usage display and cannot be switched into Codex")
+        }
     }
 }
 

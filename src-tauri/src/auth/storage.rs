@@ -174,7 +174,9 @@ pub fn add_account(account: StoredAccount) -> Result<StoredAccount> {
     store.accounts.push(account);
 
     // If this is the first account, make it active
-    if store.accounts.len() == 1 {
+    if store.active_account_id.is_none()
+        && !matches!(&account_clone.auth_data, AuthData::Cookie { .. })
+    {
         store.active_account_id = Some(account_clone.id.clone());
     }
 
@@ -195,7 +197,11 @@ pub fn remove_account(account_id: &str) -> Result<()> {
 
     // If we removed the active account, clear it or set to first available
     if store.active_account_id.as_deref() == Some(account_id) {
-        store.active_account_id = store.accounts.first().map(|a| a.id.clone());
+        store.active_account_id = store
+            .accounts
+            .iter()
+            .find(|account| !matches!(&account.auth_data, AuthData::Cookie { .. }))
+            .map(|account| account.id.clone());
     }
 
     save_accounts(&store)?;
@@ -207,8 +213,13 @@ pub fn set_active_account(account_id: &str) -> Result<()> {
     let mut store = load_accounts()?;
 
     // Verify the account exists
-    if !store.accounts.iter().any(|a| a.id == account_id) {
-        anyhow::bail!("Account not found: {account_id}");
+    let account = store
+        .accounts
+        .iter()
+        .find(|account| account.id == account_id)
+        .ok_or_else(|| anyhow::anyhow!("Account not found: {account_id}"))?;
+    if matches!(&account.auth_data, AuthData::Cookie { .. }) {
+        anyhow::bail!("Cookie accounts cannot become the active Codex login");
     }
 
     store.active_account_id = Some(account_id.to_string());
@@ -346,6 +357,9 @@ pub fn update_account_chatgpt_tokens(
         AuthData::ApiKey { .. } => {
             anyhow::bail!("Cannot update OAuth tokens for an API key account");
         }
+        AuthData::Cookie { .. } => {
+            anyhow::bail!("Cannot update OAuth tokens for a Cookie account");
+        }
     }
 
     if let Some(new_email) = email {
@@ -414,7 +428,9 @@ mod tests {
     fn refresh_token(account: &StoredAccount) -> &str {
         match &account.auth_data {
             AuthData::ChatGPT { refresh_token, .. } => refresh_token,
-            AuthData::ApiKey { .. } => panic!("expected ChatGPT account"),
+            AuthData::ApiKey { .. } | AuthData::Cookie { .. } => {
+                panic!("expected ChatGPT account")
+            }
         }
     }
 

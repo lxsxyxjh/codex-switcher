@@ -199,7 +199,9 @@ export function AccountCard({
     ? account.plan_type.charAt(0).toUpperCase() + account.plan_type.slice(1)
     : account.auth_mode === "api_key"
       ? "API Key"
-      : "Unknown";
+      : account.auth_mode === "cookie"
+        ? "Cookie"
+        : "Unknown";
 
   const planColors: Record<string, string> = {
     pro: "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-700",
@@ -208,9 +210,10 @@ export function AccountCard({
     enterprise: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700",
     free: "bg-gray-50 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700",
     api_key: "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-700",
+    cookie: "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-900/30 dark:text-sky-300 dark:border-sky-700",
   };
 
-  const planKey = account.plan_type?.toLowerCase() || "api_key";
+  const planKey = account.plan_type?.toLowerCase() || (account.auth_mode === "cookie" ? "cookie" : "api_key");
   const planColorClass = planColors[planKey] || planColors.free;
   const showSubscriptionStatus =
     account.auth_mode === "chat_g_p_t" && account.plan_type?.toLowerCase() !== "free";
@@ -368,7 +371,11 @@ export function AccountCard({
 
       {/* Actions */}
       <div className="flex gap-2 mt-3">
-        {account.is_active ? (
+        {account.auth_mode === "cookie" ? (
+          <div className="flex-1 px-4 py-2 text-center text-sm font-medium rounded-lg bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+            Usage only
+          </div>
+        ) : account.is_active ? (
           <button
             disabled
             className="flex-1 px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700 cursor-default"
@@ -394,21 +401,23 @@ export function AccountCard({
             {switching ? "Switching..." : "Switch"}
           </button>
         )}
-        <button
-          onClick={() => {
-            void onWarmup();
-          }}
-          disabled={warmingUp}
-          className={`px-3 py-2 text-sm rounded-lg transition-colors ${
-            warmingUp
-              ? "bg-amber-100 dark:bg-amber-900/30 text-amber-500 dark:text-amber-300"
-              : "bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/40 text-amber-700 dark:text-amber-300"
-          }`}
-          title={warmingUp ? "Sending warm-up request..." : "Send minimal warm-up request"}
-        >
-          ⚡
-        </button>
-        {onToggleAutoWarmup && (
+        {account.auth_mode !== "cookie" && (
+          <button
+            onClick={() => {
+              void onWarmup();
+            }}
+            disabled={warmingUp}
+            className={`px-3 py-2 text-sm rounded-lg transition-colors ${
+              warmingUp
+                ? "bg-amber-100 dark:bg-amber-900/30 text-amber-500 dark:text-amber-300"
+                : "bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/40 text-amber-700 dark:text-amber-300"
+            }`}
+            title={warmingUp ? "Sending warm-up request..." : "Send minimal warm-up request"}
+          >
+            ⚡
+          </button>
+        )}
+        {onToggleAutoWarmup && account.auth_mode !== "cookie" && (
           <button
             onClick={onToggleAutoWarmup}
             disabled={autoWarmupManagedByAll}
@@ -431,7 +440,7 @@ export function AccountCard({
             </span>
           </button>
         )}
-        <button
+        {account.auth_mode !== "cookie" && <button
           onClick={toggleStatsOpen}
           className={`px-3 py-2 text-sm rounded-lg transition-colors ${
             statsOpen
@@ -451,7 +460,7 @@ export function AccountCard({
             <path d="M4 19h16" strokeLinecap="round" />
             <path d="M8 15l3-4 3 2 4-6" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-        </button>
+        </button>}
         <button
           onClick={onDelete}
           className="px-3 py-2 text-sm rounded-lg bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-300 transition-colors"

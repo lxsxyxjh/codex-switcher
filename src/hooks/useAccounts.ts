@@ -38,10 +38,11 @@ export function useAccounts() {
     []
   );
 
-  // Push freshly polled usage down to the tray (single poller feeds the tray menu).
+  // Send failures to the shared cache so other windows can keep their last successful values.
   const reportUsageToTray = useCallback((usages: UsageInfo[]) => {
-    if (!isTauriRuntime() || usages.length === 0) return;
-    void invokeBackend("report_usage", { usages }).catch(() => {});
+    const failures = usages.filter((usage) => usage.error);
+    if (!isTauriRuntime() || failures.length === 0) return;
+    void invokeBackend("report_usage", { usages: failures }).catch(() => {});
   }, []);
 
   const runWithConcurrency = useCallback(
@@ -244,17 +245,23 @@ export function useAccounts() {
     } catch (err) {
       console.error("Failed to refresh single usage:", err);
       const message = err instanceof Error ? err.message : String(err);
+      const failedUsage = buildUsageError(
+        accountId,
+        message,
+        accountsRef.current.find((account) => account.id === accountId)?.plan_type ?? null
+      );
       setAccounts((prev) =>
         prev.map((a) =>
           a.id === accountId
             ? {
                 ...a,
-                usage: buildUsageError(accountId, message, a.plan_type ?? null),
+                usage: failedUsage,
                 usageLoading: false,
               }
             : a
         )
       );
+      reportUsageToTray([failedUsage]);
       throw err;
     }
   }, [buildUsageError, refreshMetadata, reportUsageToTray]);
@@ -334,6 +341,24 @@ export function useAccounts() {
       }
     },
     [loadAccounts, refreshUsage]
+  );
+
+  const importFromCookie = useCallback(
+    async (cookie: string, name: string) => {
+      const added = await invokeBackend<{ account: AccountInfo; usage: UsageInfo }>(
+        "add_account_from_cookie",
+        { cookie, name }
+      );
+      await loadAccounts(true);
+      setAccounts((current) =>
+        current.map((account) =>
+          account.id === added.account.id
+            ? { ...account, usage: added.usage, usageLoading: false }
+            : account
+        )
+      );
+    },
+    [loadAccounts]
   );
 
   const startOAuthLogin = useCallback(async (accountName: string) => {
@@ -488,6 +513,7 @@ export function useAccounts() {
     deleteAccount,
     renameAccount,
     importFromFile,
+    importFromCookie,
     exportAccountsSlimText,
     importAccountsSlimText,
     exportAccountsFullEncryptedFile,

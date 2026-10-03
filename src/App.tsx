@@ -145,6 +145,7 @@ function getPreferredResetsAt(usage: UsageInfo | undefined): number | null | und
 function getTimedWarmupTargets(accounts: AccountWithUsage[]): AccountWithUsage[] {
   return accounts.filter(
     (account) =>
+      account.auth_mode !== "cookie" &&
       account.usage &&
       !account.usageLoading &&
       !account.usage.error &&
@@ -178,6 +179,7 @@ function App() {
     deleteAccount,
     renameAccount,
     importFromFile,
+    importFromCookie,
     exportAccountsSlimText,
     importAccountsSlimText,
     startOAuthLogin,
@@ -931,8 +933,10 @@ function App() {
 
   const timedWarmupTargetsReady = useMemo(
     () =>
-      accounts.length > 0 &&
-      accounts.every((account) => account.usage && !account.usageLoading),
+      accounts.some((account) => account.auth_mode !== "cookie") &&
+      accounts
+        .filter((account) => account.auth_mode !== "cookie")
+        .every((account) => account.usage && !account.usageLoading),
     [accounts]
   );
 
@@ -998,6 +1002,7 @@ function App() {
 
     const checkAutoWarmup = () => {
       for (const account of accountsRef.current) {
+        if (account.auth_mode === "cookie") continue;
         const autoEnabled =
           autoWarmupAllEnabled || autoWarmupAccountIdsRef.current.has(account.id);
         if (!autoEnabled || autoWarmupRunningIdsRef.current.has(account.id)) continue;
@@ -2157,6 +2162,7 @@ function App() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onImportFile={importFromFile}
+        onImportCookie={importFromCookie}
         onStartOAuth={startOAuthLogin}
         onCompleteOAuth={completeOAuthLogin}
         onCancelOAuth={cancelOAuthLogin}

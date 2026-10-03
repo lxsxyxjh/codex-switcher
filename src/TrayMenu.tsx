@@ -12,6 +12,7 @@ import {
   readAutoWarmupAllEnabled,
   writeAutoWarmupAllEnabled,
 } from "./lib/autoWarmup";
+import { formatCreditsBalance } from "./lib/usageDisplay";
 
 const TRAY_REFRESH_EVENT = "tray-refresh";
 const ACCOUNTS_CHANGED_EVENT = "accounts-changed";
@@ -124,6 +125,20 @@ function retainUsageForAccounts(
   );
 }
 
+function mergeUsageForAccounts(
+  previous: Record<string, UsageInfo>,
+  accounts: AccountInfo[],
+  updates: UsageInfo[]
+): Record<string, UsageInfo> {
+  const next = retainUsageForAccounts(previous, accounts);
+  for (const usage of updates) {
+    if (!usage.error || !next[usage.account_id]) {
+      next[usage.account_id] = usage;
+    }
+  }
+  return next;
+}
+
 function TrayMenu() {
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -134,38 +149,7 @@ function TrayMenu() {
   const [refreshing, setRefreshing] = useState(false);
   const [autoWarmupAllEnabled, setAutoWarmupAllEnabled] = useState(readAutoWarmupAllEnabled);
   const [dockDisplayMode, setDockDisplayMode] = useState<DockDisplayMode | null>(null);
-
-  // Fetch each account's rate-limit usage in parallel; rows fill in as they land.
-  const loadUsage = useCallback(async (list: AccountInfo[]) => {
-    await Promise.all(
-      list.map(async (account) => {
-        try {
-          const usage = await invokeBackend<UsageInfo>("get_usage", {
-            accountId: account.id,
-          });
-          setUsageById((prev) => ({ ...prev, [account.id]: usage }));
-        } catch (err) {
-          setUsageById((prev) => ({
-            ...prev,
-            [account.id]: {
-              account_id: account.id,
-              plan_type: account.plan_type,
-              primary_used_percent: null,
-              primary_window_minutes: null,
-              primary_resets_at: null,
-              secondary_used_percent: null,
-              secondary_window_minutes: null,
-              secondary_resets_at: null,
-              has_credits: null,
-              unlimited_credits: null,
-              credits_balance: null,
-              error: formatError(err),
-            },
-          }));
-        }
-      })
-    );
-  }, []);
+  const [floatingUsageEnabled, setFloatingUsageEnabled] = useState<boolean | null>(null);
 
   const loadActiveStats = useCallback(async (list: AccountInfo[]) => {
     const active = list.find((account) => account.is_active);
@@ -218,21 +202,35 @@ function TrayMenu() {
     }
   }, []);
 
+  const loadFloatingUsageEnabled = useCallback(async () => {
+    try {
+      setFloatingUsageEnabled(await invokeBackend<boolean | null>("get_floating_usage_enabled"));
+    } catch {
+      setFloatingUsageEnabled(null);
+    }
+  }, []);
+
   const load = useCallback(async () => {
     try {
       void loadDockDisplayMode();
+      void loadFloatingUsageEnabled();
       const list = await invokeBackend<AccountInfo[]>("list_accounts");
       setAccounts(list);
-      setUsageById((prev) => retainUsageForAccounts(prev, list));
+      let cachedUsage: UsageInfo[] = [];
+      try {
+        cachedUsage = await invokeBackend<UsageInfo[]>("get_cached_usage");
+      } catch (err) {
+        console.warn("Failed to load cached usage for tray:", err);
+      }
+      setUsageById((prev) => mergeUsageForAccounts(prev, list, cachedUsage));
       setError(null);
-      void loadUsage(list); // Don't block the list render on the usage calls.
       void loadActiveStats(list);
     } catch (err) {
       setError(formatError(err));
     } finally {
       setLoading(false);
     }
-  }, [loadActiveStats, loadDockDisplayMode, loadUsage]);
+  }, [loadActiveStats, loadDockDisplayMode, loadFloatingUsageEnabled]);
 
   // Manual refresh: re-pull accounts and actively fetch fresh usage once.
   const handleRefresh = useCallback(async () => {
@@ -240,15 +238,19 @@ function TrayMenu() {
     try {
       const list = await invokeBackend<AccountInfo[]>("list_accounts");
       setAccounts(list);
-      setUsageById((prev) => retainUsageForAccounts(prev, list));
       setError(null);
-      await Promise.all([loadUsage(list), loadActiveStats(list)]);
+      const [usages] = await Promise.all([
+        invokeBackend<UsageInfo[]>("refresh_all_accounts_usage"),
+        loadActiveStats(list),
+      ]);
+      await invokeBackend("report_usage", { usages });
+      setUsageById((prev) => mergeUsageForAccounts(prev, list, usages));
     } catch (err) {
       setError(formatError(err));
     } finally {
       setRefreshing(false);
     }
-  }, [loadActiveStats, loadUsage]);
+  }, [loadActiveStats]);
 
   const handleAutoWarmupToggle = useCallback(async () => {
     const next = !autoWarmupAllEnabled;
@@ -282,11 +284,25 @@ function TrayMenu() {
     [dockDisplayMode]
   );
 
+  const handleFloatingUsageToggle = useCallback(async () => {
+    if (floatingUsageEnabled === null) return;
+    const next = !floatingUsageEnabled;
+    try {
+      const enabled = await invokeBackend<boolean>("set_floating_usage_enabled", {
+        enabled: next,
+      });
+      setFloatingUsageEnabled(enabled);
+    } catch (err) {
+      setError(formatError(err));
+    }
+  }, [floatingUsageEnabled]);
+
   // Reload when the tray is reopened or accounts change elsewhere.
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let unlistenRefresh: (() => void) | undefined;
     let unlistenChanged: (() => void) | undefined;
+    let unlistenUsage: (() => void) | undefined;
     let unlistenTheme: (() => void) | undefined;
     let unlistenAutoWarmup: (() => void) | undefined;
 
@@ -298,6 +314,17 @@ function TrayMenu() {
         void load();
       });
       unlistenChanged = await listen(ACCOUNTS_CHANGED_EVENT, () => void load());
+      unlistenUsage = await listen<UsageInfo[]>("usage-updated", ({ payload }) => {
+        setUsageById((previous) => {
+          const next = { ...previous };
+          for (const usage of payload) {
+            if (!usage.error || !next[usage.account_id]) {
+              next[usage.account_id] = usage;
+            }
+          }
+          return next;
+        });
+      });
       unlistenTheme = await listen<ThemeMode>(THEME_CHANGED_EVENT, ({ payload }) => {
         if (payload === "light" || payload === "dark") {
           applyTheme(payload);
@@ -316,12 +343,14 @@ function TrayMenu() {
     return () => {
       unlistenRefresh?.();
       unlistenChanged?.();
+      unlistenUsage?.();
       unlistenTheme?.();
       unlistenAutoWarmup?.();
     };
   }, [load]);
 
   const handleSwitch = useCallback(async (account: AccountInfo) => {
+    if (account.auth_mode === "cookie") return;
     if (account.is_active) {
       void invokeBackend("hide_tray_window");
       return;
@@ -399,7 +428,7 @@ function TrayMenu() {
           </div>
         ) : (
           accounts.map((account) => {
-            const plan = formatPlan(account.plan_type);
+            const plan = formatPlan(account.plan_type) || (account.auth_mode === "cookie" ? "Cookie" : "");
             const usage = usageById[account.id];
             const stats = statsById[account.id];
             const windows =
@@ -426,7 +455,7 @@ function TrayMenu() {
               <button
                 key={account.id}
                 onClick={() => void handleSwitch(account)}
-                disabled={switchingId !== null}
+                disabled={switchingId !== null || account.auth_mode === "cookie"}
                 className={`flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors disabled:opacity-60 ${
                   account.is_active
                     ? "bg-gray-100 dark:bg-gray-800"
@@ -506,6 +535,11 @@ function TrayMenu() {
                       {account.email}
                     </span>
                   ) : null}
+                  {(account.is_active || account.auth_mode === "cookie") && (
+                    <span className="mt-1 block text-[11px] text-gray-500 dark:text-gray-400">
+                      Credits: {formatCreditsBalance(usage?.credits_balance)}
+                    </span>
+                  )}
                   {account.is_active && stats?.available && (
                     <span className="mt-2 grid grid-cols-2 gap-1.5">
                       <span className="rounded-md bg-white px-2 py-1 text-[11px] text-gray-600 shadow-sm dark:bg-gray-950 dark:text-gray-300">
@@ -562,6 +596,17 @@ function TrayMenu() {
             }`}
           >
             Menu Bar
+          </button>
+        </div>
+      )}
+
+      {floatingUsageEnabled !== null && (
+        <div className="border-t border-gray-100 px-2 py-1.5 dark:border-gray-800">
+          <button
+            onClick={() => void handleFloatingUsageToggle()}
+            className="w-full rounded-md px-2 py-1 text-left text-xs text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            {floatingUsageEnabled ? "Hide floating usage" : "Show floating usage"}
           </button>
         </div>
       )}

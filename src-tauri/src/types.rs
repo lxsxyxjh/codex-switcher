@@ -47,6 +47,10 @@ pub struct AppSettings {
     pub dock_display_mode: DockDisplayMode,
     #[serde(default = "default_close_behavior_prompt_enabled")]
     pub close_behavior_prompt_enabled: bool,
+    #[serde(default)]
+    pub floating_usage_enabled: bool,
+    #[serde(default)]
+    pub floating_usage_position: Option<FloatingUsagePosition>,
 }
 
 impl Default for AppSettings {
@@ -55,8 +59,16 @@ impl Default for AppSettings {
             tray_display_mode: TrayDisplayMode::default(),
             dock_display_mode: DockDisplayMode::default(),
             close_behavior_prompt_enabled: true,
+            floating_usage_enabled: false,
+            floating_usage_position: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct FloatingUsagePosition {
+    pub x: i32,
+    pub y: i32,
 }
 
 impl Default for AccountsStore {
@@ -165,6 +177,31 @@ impl StoredAccount {
             last_used_at: None,
         }
     }
+
+    /// Create a usage-only account from a ChatGPT browser session cookie
+    pub fn new_cookie(
+        name: String,
+        email: Option<String>,
+        plan_type: Option<String>,
+        account_id: Option<String>,
+        session_cookie: String,
+    ) -> Self {
+        let name = Self::resolved_name(name, email.as_ref(), account_id.as_ref(), "Cookie");
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name,
+            email,
+            plan_type,
+            subscription_expires_at: None,
+            auth_mode: AuthMode::Cookie,
+            auth_data: AuthData::Cookie {
+                session_cookie,
+                account_id,
+            },
+            created_at: Utc::now(),
+            last_used_at: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -232,6 +269,31 @@ mod account_name_tests {
     }
 }
 
+#[cfg(all(test, windows))]
+mod cookie_storage_tests {
+    use super::{AuthData, StoredAccount};
+
+    #[test]
+    fn cookie_credentials_are_protected_in_serialized_accounts() {
+        let account = StoredAccount::new_cookie(
+            "Cookie test".into(),
+            None,
+            None,
+            None,
+            "session=sample".into(),
+        );
+        let serialized = serde_json::to_string(&account.auth_data).unwrap();
+        assert!(!serialized.contains("session=sample"));
+        assert!(serialized.contains("dpapi:"));
+
+        let restored: AuthData = serde_json::from_str(&serialized).unwrap();
+        let AuthData::Cookie { session_cookie, .. } = restored else {
+            panic!("expected Cookie account data");
+        };
+        assert_eq!(session_cookie, "session=sample");
+    }
+}
+
 /// Authentication mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -240,10 +302,12 @@ pub enum AuthMode {
     ApiKey,
     /// Using ChatGPT OAuth tokens
     ChatGPT,
+    /// Using a ChatGPT browser session cookie for usage only
+    Cookie,
 }
 
 /// Authentication data (credentials)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthData {
     /// API key authentication
@@ -262,6 +326,191 @@ pub enum AuthData {
         /// ChatGPT account ID
         account_id: Option<String>,
     },
+    /// ChatGPT browser session cookie used to read usage without changing Codex login
+    Cookie {
+        #[serde(with = "protected_cookie")]
+        session_cookie: String,
+        account_id: Option<String>,
+    },
+}
+
+impl std::fmt::Debug for AuthData {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ApiKey { .. } => formatter.write_str("ApiKey { key: [REDACTED] }"),
+            Self::ChatGPT { account_id, .. } => formatter
+                .debug_struct("ChatGPT")
+                .field("tokens", &"[REDACTED]")
+                .field("account_id", account_id)
+                .finish(),
+            Self::Cookie { account_id, .. } => formatter
+                .debug_struct("Cookie")
+                .field("session_cookie", &"[REDACTED]")
+                .field("account_id", account_id)
+                .finish(),
+        }
+    }
+}
+
+mod protected_cookie {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &String, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let protected = protect(value).map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&protected)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<String, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        unprotect(&value).map_err(serde::de::Error::custom)
+    }
+
+    #[cfg(windows)]
+    fn protect(value: &str) -> Result<String, String> {
+        use std::{ffi::c_void, ptr};
+
+        #[repr(C)]
+        struct DataBlob {
+            size: u32,
+            data: *mut u8,
+        }
+
+        #[link(name = "Crypt32")]
+        unsafe extern "system" {
+            fn CryptProtectData(
+                input: *const DataBlob,
+                description: *const u16,
+                entropy: *const DataBlob,
+                reserved: *mut c_void,
+                prompt: *const c_void,
+                flags: u32,
+                output: *mut DataBlob,
+            ) -> i32;
+        }
+
+        #[link(name = "Kernel32")]
+        unsafe extern "system" {
+            fn LocalFree(memory: *mut c_void) -> *mut c_void;
+        }
+
+        let bytes = value.as_bytes();
+        let size = u32::try_from(bytes.len()).map_err(|_| "Cookie is too large".to_string())?;
+        let input = DataBlob {
+            size,
+            data: bytes.as_ptr() as *mut u8,
+        };
+        let mut output = DataBlob {
+            size: 0,
+            data: ptr::null_mut(),
+        };
+        let succeeded = unsafe {
+            CryptProtectData(
+                &input,
+                ptr::null(),
+                ptr::null(),
+                ptr::null_mut(),
+                ptr::null(),
+                1,
+                &mut output,
+            )
+        };
+        if succeeded == 0 {
+            return Err("Windows could not protect the Cookie for this user".to_string());
+        }
+
+        let protected = unsafe {
+            std::slice::from_raw_parts(output.data, output.size as usize).to_vec()
+        };
+        unsafe {
+            LocalFree(output.data.cast());
+        }
+        Ok(format!("dpapi:{}", URL_SAFE_NO_PAD.encode(protected)))
+    }
+
+    #[cfg(not(windows))]
+    fn protect(value: &str) -> Result<String, String> {
+        Ok(value.to_string())
+    }
+
+    #[cfg(windows)]
+    fn unprotect(value: &str) -> Result<String, String> {
+        use std::{ffi::c_void, ptr};
+
+        #[repr(C)]
+        struct DataBlob {
+            size: u32,
+            data: *mut u8,
+        }
+
+        #[link(name = "Crypt32")]
+        unsafe extern "system" {
+            fn CryptUnprotectData(
+                input: *const DataBlob,
+                description: *mut *mut u16,
+                entropy: *const DataBlob,
+                reserved: *mut c_void,
+                prompt: *const c_void,
+                flags: u32,
+                output: *mut DataBlob,
+            ) -> i32;
+        }
+
+        #[link(name = "Kernel32")]
+        unsafe extern "system" {
+            fn LocalFree(memory: *mut c_void) -> *mut c_void;
+        }
+
+        let Some(encoded) = value.strip_prefix("dpapi:") else {
+            return Ok(value.to_string());
+        };
+        let mut bytes = URL_SAFE_NO_PAD
+            .decode(encoded)
+            .map_err(|_| "Protected Cookie data is invalid".to_string())?;
+        let size = u32::try_from(bytes.len())
+            .map_err(|_| "Protected Cookie data is too large".to_string())?;
+        let input = DataBlob {
+            size,
+            data: bytes.as_mut_ptr(),
+        };
+        let mut output = DataBlob {
+            size: 0,
+            data: ptr::null_mut(),
+        };
+        let succeeded = unsafe {
+            CryptUnprotectData(
+                &input,
+                ptr::null_mut(),
+                ptr::null(),
+                ptr::null_mut(),
+                ptr::null(),
+                1,
+                &mut output,
+            )
+        };
+        if succeeded == 0 {
+            return Err("This Cookie is protected for a different Windows user".to_string());
+        }
+
+        let unprotected = unsafe {
+            std::slice::from_raw_parts(output.data, output.size as usize).to_vec()
+        };
+        unsafe {
+            LocalFree(output.data.cast());
+        }
+        String::from_utf8(unprotected).map_err(|_| "Protected Cookie data is not UTF-8".to_string())
+    }
+
+    #[cfg(not(windows))]
+    fn unprotect(value: &str) -> Result<String, String> {
+        Ok(value.to_string())
+    }
 }
 
 #[derive(Debug, Clone, Default)]

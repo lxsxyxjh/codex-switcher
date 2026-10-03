@@ -11,17 +11,19 @@ interface AddAccountModalProps {
   isOpen: boolean;
   onClose: () => void;
   onImportFile: (source: FileSource, name: string) => Promise<void>;
+  onImportCookie: (cookie: string, name: string) => Promise<void>;
   onStartOAuth: (name: string) => Promise<{ auth_url: string }>;
   onCompleteOAuth: () => Promise<unknown>;
   onCancelOAuth: () => Promise<void>;
 }
 
-type Tab = "oauth" | "import";
+type Tab = "oauth" | "import" | "cookie";
 
 export function AddAccountModal({
   isOpen,
   onClose,
   onImportFile,
+  onImportCookie,
   onStartOAuth,
   onCompleteOAuth,
   onCancelOAuth,
@@ -29,6 +31,7 @@ export function AddAccountModal({
   const [activeTab, setActiveTab] = useState<Tab>("oauth");
   const [name, setName] = useState("");
   const [fileSource, setFileSource] = useState<FileSource | null>(null);
+  const [cookie, setCookie] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [oauthPending, setOauthPending] = useState(false);
@@ -40,6 +43,7 @@ export function AddAccountModal({
   const resetForm = () => {
     setName("");
     setFileSource(null);
+    setCookie("");
     setError(null);
     setLoading(false);
     setOauthPending(false);
@@ -99,6 +103,23 @@ export function AddAccountModal({
     }
   };
 
+  const handleImportCookie = async () => {
+    if (!cookie.trim()) {
+      setError("Paste a ChatGPT Cookie header");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      await onImportCookie(cookie, name.trim());
+      handleClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setLoading(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -117,11 +138,11 @@ export function AddAccountModal({
 
         {/* Tabs */}
         <div className="flex border-b border-gray-100 dark:border-gray-800">
-          {(["oauth", "import"] as Tab[]).map((tab) => (
+          {(["oauth", "import", "cookie"] as Tab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => {
-                if (tab === "import" && oauthPending) {
+                if (tab !== "oauth" && oauthPending) {
                   void onCancelOAuth().catch((err) => {
                     console.error("Failed to cancel login:", err);
                   });
@@ -136,7 +157,7 @@ export function AddAccountModal({
                   : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
                 }`}
             >
-              {tab === "oauth" ? "ChatGPT Login" : "Import File"}
+              {tab === "oauth" ? "ChatGPT Login" : tab === "import" ? "Import File" : "Cookie"}
             </button>
           ))}
         </div>
@@ -241,6 +262,26 @@ export function AddAccountModal({
             </div>
           )}
 
+          {activeTab === "cookie" && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                ChatGPT Cookie header
+              </label>
+              <input
+                type="password"
+                value={cookie}
+                onChange={(event) => setCookie(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="Paste the Cookie header copied from chatgpt.com"
+                className="w-full px-3 py-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-gray-400 dark:focus:border-gray-500 focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500"
+              />
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                Stored with Windows user encryption. Cookie accounts only show usage; they cannot switch Codex login or send warm-up requests.
+              </p>
+            </div>
+          )}
+
           {/* Error */}
           {error && (
             <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg text-red-600 dark:text-red-300 text-sm">
@@ -258,7 +299,7 @@ export function AddAccountModal({
             Cancel
           </button>
           <button
-            onClick={activeTab === "oauth" ? handleOAuthLogin : handleImportFile}
+            onClick={activeTab === "oauth" ? handleOAuthLogin : activeTab === "import" ? handleImportFile : handleImportCookie}
             disabled={isPrimaryDisabled}
             className="flex-1 px-4 py-2.5 text-sm font-medium rounded-lg bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:hover:bg-gray-200 text-white dark:text-gray-900 transition-colors disabled:opacity-50"
           >
@@ -266,7 +307,7 @@ export function AddAccountModal({
               ? "Adding..."
               : activeTab === "oauth"
                 ? "Generate Login Link"
-                : "Import"}
+                : activeTab === "import" ? "Import" : "Check and Add"}
           </button>
         </div>
       </div>
