@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AccountInfo, UsageInfo } from "./types";
 import { invokeBackend, isTauriRuntime } from "./lib/platform";
 import { getTauriWindow } from "./lib/tauriWindow";
-import { formatCreditsBalance } from "./lib/usageDisplay";
+import { formatCreditsBalance, formatUsagePercent, formatUsageWindowLabel } from "./lib/usageDisplay";
 import {
   applyTheme,
   syncThemeFromStorage,
@@ -21,11 +21,6 @@ export interface FloatingOptions {
   floating_usage_vertical: boolean;
   floating_usage_edge_hide: boolean;
   floating_usage_edge: string | null;
-}
-
-function remainingPercent(used: number | null | undefined, showUsed: boolean): string {
-  if (used === null || used === undefined || !Number.isFinite(used)) return "--";
-  return `${Math.round(Math.max(0, Math.min(100, showUsed ? used : 100 - used)))}%`;
 }
 
 function FloatingUsage() {
@@ -272,8 +267,8 @@ function FloatingUsage() {
       className="select-none border border-slate-300/80 bg-slate-100/95 text-slate-600 dark:border-slate-600/80 dark:bg-slate-800/95 dark:text-slate-200"
       style={{ display: "inline-grid", position: collapsed ? "absolute" : "relative", visibility: collapsed ? "hidden" : "visible", pointerEvents: collapsed ? "none" : "auto", gridTemplateColumns: options.floating_usage_vertical ? "max-content" : "repeat(3, max-content)", width: "max-content", gap: 10 * scale, padding: `${8 * scale}px ${10 * scale}px`, fontSize: 12 * scale, lineHeight: 1.5, borderRadius: 10 * scale }}
     >
-      <span className="whitespace-nowrap tabular-nums">5h {mode}{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{remainingPercent(usage?.primary_window_minutes == null || usage.primary_window_minutes === 300 ? usage?.primary_used_percent : undefined, options.floating_usage_show_used)}</b></span>
-      <span className="whitespace-nowrap tabular-nums">7d {mode}{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{remainingPercent(usage?.secondary_window_minutes == null || usage.secondary_window_minutes === 10080 ? usage?.secondary_used_percent : undefined, options.floating_usage_show_used)}</b></span>
+      <span className="whitespace-nowrap tabular-nums">{formatUsageWindowLabel(usage?.primary_window_minutes, "5h")} {mode}{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatUsagePercent(usage?.primary_used_percent, options.floating_usage_show_used)}</b></span>
+      <span className="whitespace-nowrap tabular-nums">{formatUsageWindowLabel(usage?.secondary_window_minutes, "7d")} {mode}{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatUsagePercent(usage?.secondary_used_percent, options.floating_usage_show_used)}</b></span>
       <span className="whitespace-nowrap tabular-nums">{isStale && <span className="text-amber-500">• </span>}余额{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatCreditsBalance(usage?.credits_balance)}</b></span>
     </div>
     </div>

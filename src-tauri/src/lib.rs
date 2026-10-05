@@ -15,12 +15,12 @@ use commands::{
     check_codex_processes,
     complete_close_behavior, complete_login, delete_account, export_accounts_full_encrypted_file,
     export_accounts_slim_text, get_account_usage_stats, get_active_account_info,
-    get_dock_display_mode, get_masked_account_ids, get_usage, hide_tray_window,
+    get_dock_display_mode, get_usage, hide_tray_window,
     import_accounts_full_encrypted_file, import_accounts_slim_text, kill_codex_processes,
     get_cached_usage, get_floating_usage_enabled, list_accounts, open_main_window, quit_app,
     refresh_account_metadata,
     refresh_all_accounts_usage, rename_account, report_usage, set_dock_display_mode,
-    save_floating_usage_position, set_floating_usage_enabled, set_masked_account_ids, start_login,
+    save_floating_usage_position, set_floating_usage_enabled, start_login,
     switch_account, warmup_account, warmup_all_accounts,
 };
 use tauri::Manager;
@@ -102,9 +102,6 @@ pub fn run() {
             import_accounts_slim_text,
             export_accounts_full_encrypted_file,
             import_accounts_full_encrypted_file,
-            // Masked accounts
-            get_masked_account_ids,
-            set_masked_account_ids,
             // OAuth
             start_login,
             complete_login,

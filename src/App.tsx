@@ -183,8 +183,6 @@ function App() {
     startOAuthLogin,
     completeOAuthLogin,
     cancelOAuthLogin,
-    loadMaskedAccountIds,
-    saveMaskedAccountIds,
   } = useAccounts();
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -224,7 +222,6 @@ function App() {
   const [isTimedWarmupOpen, setIsTimedWarmupOpen] = useState(false);
   const [timedWarmupRunning, setTimedWarmupRunning] = useState(false);
   const [timedWarmupDraft, setTimedWarmupDraft] = useState("");
-  const [maskedAccounts, setMaskedAccounts] = useState<Set<string>>(new Set());
   const [accountSearchQuery, setAccountSearchQuery] = useState("");
   const [isAccountSearchOpen, setIsAccountSearchOpen] = useState(false);
   const isAccountSearchEnabled = accounts.length >= ACCOUNT_SEARCH_THRESHOLD;
@@ -389,31 +386,6 @@ function App() {
     void getTauriWindow()?.toggleMaximize();
   }, []);
 
-  const toggleMask = (accountId: string) => {
-    setMaskedAccounts((prev) => {
-      const next = new Set(prev);
-      if (next.has(accountId)) {
-        next.delete(accountId);
-      } else {
-        next.add(accountId);
-      }
-      void saveMaskedAccountIds(Array.from(next));
-      return next;
-    });
-  };
-
-  const allMasked =
-    accounts.length > 0 && accounts.every((account) => maskedAccounts.has(account.id));
-
-  const toggleMaskAll = () => {
-    setMaskedAccounts((prev) => {
-      const shouldMaskAll = !accounts.every((account) => prev.has(account.id));
-      const next = shouldMaskAll ? new Set(accounts.map((account) => account.id)) : new Set<string>();
-      void saveMaskedAccountIds(Array.from(next));
-      return next;
-    });
-  };
-
   const checkProcesses = useCallback(async () => {
     try {
       const info = await invokeBackend<CodexProcessInfo>("check_codex_processes");
@@ -444,14 +416,6 @@ function App() {
     return () => clearInterval(interval);
   }, [checkProcesses]);
 
-  // Load masked accounts from storage on mount
-  useEffect(() => {
-    loadMaskedAccountIds().then((ids) => {
-      if (ids.length > 0) {
-        setMaskedAccounts(new Set(ids));
-      }
-    });
-  }, [loadMaskedAccountIds]);
 
   useEffect(() => {
     if (!isActionsMenuOpen) return;
@@ -1176,8 +1140,6 @@ function App() {
       if (!summary) return;
       const accountList = await loadAccounts();
       await refreshUsage(accountList);
-      const maskedIds = await loadMaskedAccountIds();
-      setMaskedAccounts(new Set(maskedIds));
       showWarmupToast(
         `Imported ${summary.imported_count}, skipped ${summary.skipped_count} (total ${summary.total_in_payload})`
       );
@@ -1424,27 +1386,6 @@ function App() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 shrink-0 md:ml-4 md:w-max md:flex-nowrap md:justify-end">
-              <button
-                onClick={toggleMaskAll}
-                className="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-100 text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 shrink-0"
-                title={allMasked ? "显示所有账户名称和邮箱" : "隐藏所有账户名称和邮箱"}
-              >
-                {allMasked ? (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
-                    />
-                  </svg>
-                ) : (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                  </svg>
-                )}
-              </button>
               <button
                 onClick={handleRefresh}
                 disabled={isRefreshing}
@@ -1787,8 +1728,6 @@ function App() {
                       warmingUpId === activeAccount.id ||
                       autoWarmupRunningIds.has(activeAccount.id)
                     }
-                    masked={maskedAccounts.has(activeAccount.id)}
-                    onToggleMask={() => toggleMask(activeAccount.id)}
                     autoWarmupEnabled={
                       autoWarmupAllEnabled || autoWarmupAccountIds.has(activeAccount.id)
                     }
@@ -1884,8 +1823,6 @@ function App() {
                         warmingUpId === account.id ||
                         autoWarmupRunningIds.has(account.id)
                       }
-                      masked={maskedAccounts.has(account.id)}
-                      onToggleMask={() => toggleMask(account.id)}
                       autoWarmupEnabled={
                         autoWarmupAllEnabled || autoWarmupAccountIds.has(account.id)
                       }

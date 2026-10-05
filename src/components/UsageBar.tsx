@@ -1,30 +1,9 @@
 import type { UsageInfo } from "../types";
-import { formatCreditsBalance } from "../lib/usageDisplay";
+import { formatCreditsBalance, formatQuotaResetTime, formatUsagePercent } from "../lib/usageDisplay";
 
 interface UsageBarProps {
   usage?: UsageInfo;
   loading?: boolean;
-}
-
-function formatResetTime(resetAt: number | null | undefined): string {
-  if (!resetAt) return "";
-  const now = Math.floor(Date.now() / 1000);
-  const diff = resetAt - now;
-  if (diff <= 0) return "现在";
-  if (diff < 60) return `${diff} 秒`;
-  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟`;
-  return `${Math.floor(diff / 3600)} 小时 ${Math.floor((diff % 3600) / 60)} 分钟`;
-}
-
-function formatExactResetTime(resetAt: number | null | undefined): string {
-  if (!resetAt) return "";
-
-  const date = new Date(resetAt * 1000);
-  const month = new Intl.DateTimeFormat("zh-CN", { month: "long" }).format(date);
-  const day = date.getDate();
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  const hour = String(date.getHours()).padStart(2, "0");
-  return `${month}${day}日 ${hour}:${minutes}`;
 }
 
 function formatWindowDuration(minutes: number | null | undefined): string {
@@ -47,7 +26,7 @@ function RateLimitBar({
   resetsAt?: number | null;
 }) {
   // Calculate remaining percentage
-  const remainingPercent = Math.max(0, 100 - usedPercent);
+  const remainingPercent = Math.max(0, Math.min(100, 100 - usedPercent));
   
   // Color based on remaining (green = plenty left, red = almost none left)
   const colorClass =
@@ -58,19 +37,15 @@ function RateLimitBar({
         : "bg-emerald-500";
 
   const windowLabel = formatWindowDuration(windowMinutes);
-  const resetLabel = formatResetTime(resetsAt);
-  const exactResetLabel = formatExactResetTime(resetsAt);
+  const resetLabel = formatQuotaResetTime(resetsAt);
 
   return (
     <div className="space-y-1">
-      <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
+      <div className="grid grid-cols-[1fr_auto] gap-2 text-xs text-gray-500 dark:text-gray-400">
         <span>{windowLabel ? `${windowLabel}额度` : label}</span>
-        <span>
-          剩余 {remainingPercent.toFixed(0)}%
-          {resetLabel && ` · ${resetLabel}后重置`}
-          {resetLabel && exactResetLabel && ` (${exactResetLabel})`}
-        </span>
+        <span>剩余 {formatUsagePercent(usedPercent)}</span>
       </div>
+      {resetLabel && <div className="text-xs text-gray-400 dark:text-gray-500">重置：{resetLabel}</div>}
       <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
         <div
           className={`h-full transition-all duration-300 ${colorClass}`}

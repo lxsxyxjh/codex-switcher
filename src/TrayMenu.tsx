@@ -12,7 +12,7 @@ import {
   readAutoWarmupAllEnabled,
   writeAutoWarmupAllEnabled,
 } from "./lib/autoWarmup";
-import { formatCreditsBalance } from "./lib/usageDisplay";
+import { formatCreditsBalance, formatQuotaResetTime } from "./lib/usageDisplay";
 
 const TRAY_REFRESH_EVENT = "tray-refresh";
 const ACCOUNTS_CHANGED_EVENT = "accounts-changed";
@@ -55,38 +55,6 @@ function remainingTone(remaining: number): { text: string; bar: string; dot: str
     bar: "bg-emerald-500",
     dot: "bg-emerald-500",
   };
-}
-
-// "time until reset" label, e.g. "4h 55m" / "4d 18h" / "now".
-function formatResetAt(resetAt: number | null | undefined): string | null {
-  if (!resetAt) return null;
-
-  const diff = resetAt - Math.floor(Date.now() / 1000);
-  if (diff <= 0) return "now";
-  if (diff < 60) return `${diff} 秒`;
-  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟`;
-  if (diff < 86_400) {
-    return `${Math.floor(diff / 3600)} 小时 ${Math.floor((diff % 3600) / 60)} 分钟`;
-  }
-  return `${Math.floor(diff / 86_400)} 天 ${Math.floor((diff % 86_400) / 3600)} 小时`;
-}
-
-function formatExactResetTime(
-  resetAt: number | null | undefined,
-  isWeekly: boolean,
-): string | null {
-  if (!resetAt) return null;
-
-  const date = new Date(resetAt * 1000);
-  const diff = resetAt - Math.floor(Date.now() / 1000);
-
-  if (isWeekly && diff > 86_400) {
-    return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(date);
-  }
-
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  const hour = String(date.getHours()).padStart(2, "0");
-  return `${hour}:${minutes}`;
 }
 
 function formatTokens(tokens: number | null | undefined): string {
@@ -498,8 +466,7 @@ function TrayMenu() {
                       {windows.map((w) => {
                         const remaining = Math.max(0, 100 - w.used);
                         const tone = remainingTone(remaining);
-                        const reset = formatResetAt(w.resetAt);
-                        const exactReset = formatExactResetTime(w.resetAt, w.label === "每周");
+                        const reset = formatQuotaResetTime(w.resetAt);
                         return (
                           <span key={w.label} className="block">
                             <span className="flex items-center gap-1">
@@ -516,14 +483,13 @@ function TrayMenu() {
                                 style={{ width: `${Math.min(remaining, 100)}%` }}
                               />
                             </span>
-                            <span className="mt-0.5 flex justify-between text-[11px] text-gray-500 dark:text-gray-400">
+                            <span className="mt-0.5 grid gap-0.5 text-[11px] text-gray-500 dark:text-gray-400">
                               <span className={tone.text}>
                                 剩余 {remaining.toFixed(0)}%
                               </span>
                               {reset && (
-                                <span className="shrink-0 whitespace-nowrap">
-                                  {reset === "now" ? "现在重置" : `${reset}后重置`}
-                                  {exactReset && ` • ${exactReset}`}
+                                <span>
+                                  重置：{reset}
                                 </span>
                               )}
                             </span>

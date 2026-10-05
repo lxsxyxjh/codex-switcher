@@ -14,9 +14,6 @@ pub struct AccountsStore {
     pub accounts: Vec<StoredAccount>,
     /// Currently active account ID
     pub active_account_id: Option<String>,
-    /// Set of account IDs that are masked (hidden)
-    #[serde(default)]
-    pub masked_account_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,7 +93,6 @@ impl Default for AccountsStore {
             version: 1,
             accounts: Vec::new(),
             active_account_id: None,
-            masked_account_ids: Vec::new(),
         }
     }
 }
@@ -766,6 +762,22 @@ mod tests {
     };
     use base64::Engine;
     use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn existing_account_store_loads_after_removing_visibility_settings() {
+        let account = StoredAccount::new_api_key("sample".into(), "sample-key".into());
+        let payload = serde_json::json!({
+            "version": 1,
+            "accounts": [account],
+            "active_account_id": "sample-id",
+            "masked_account_ids": ["sample-id"]
+        });
+        let store: super::AccountsStore = serde_json::from_value(payload).unwrap();
+        assert_eq!(store.accounts.len(), 1);
+        assert_eq!(store.active_account_id.as_deref(), Some("sample-id"));
+        let saved = serde_json::to_value(store).unwrap();
+        assert!(saved.get("masked_account_ids").is_none());
+    }
 
     #[test]
     fn parses_subscription_expiry_from_realistic_id_token_claims() {

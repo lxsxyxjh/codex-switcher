@@ -413,20 +413,6 @@ pub fn update_account_chatgpt_tokens(
     Ok(updated)
 }
 
-/// Get the list of masked account IDs
-pub fn get_masked_account_ids() -> Result<Vec<String>> {
-    let store = load_accounts()?;
-    Ok(store.masked_account_ids.clone())
-}
-
-/// Set the list of masked account IDs
-pub fn set_masked_account_ids(ids: Vec<String>) -> Result<()> {
-    let mut store = load_accounts()?;
-    store.masked_account_ids = ids;
-    save_accounts(&store)?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::{store_account, sync_active_account_tokens};
