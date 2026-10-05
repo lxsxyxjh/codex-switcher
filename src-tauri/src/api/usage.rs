@@ -149,6 +149,7 @@ pub async fn get_account_usage(account: &StoredAccount) -> Result<UsageInfo> {
     write_usage_log(&format!("请求开始 account={} name={} method={method} proxy_config=自动读取环境变量及系统代理（不是实际连接路径证明） {proxies} no_proxy_configured={}", account.id, account.name, std::env::var_os("NO_PROXY").or_else(|| std::env::var_os("no_proxy")).is_some()));
     let result = match &account.auth_data {
         AuthData::ApiKey { .. } => Ok(UsageInfo {
+            fetched_at: None,
             account_id: account.id.clone(),
             plan_type: Some("api_key".to_string()),
             primary_used_percent: None,
@@ -526,6 +527,7 @@ fn convert_payload_to_usage_info(account_id: &str, payload: RateLimitStatusPaylo
     let credits = extract_credits(payload.credits);
 
     UsageInfo {
+        fetched_at: Some(Utc::now()),
         account_id: account_id.to_string(),
         plan_type: Some(payload.plan_type),
         primary_used_percent: primary.as_ref().map(|w| w.used_percent),

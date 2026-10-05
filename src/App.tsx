@@ -11,6 +11,13 @@ import "./App.css";
 
 export default function App() {
   const { accounts, loading, error, loadAccounts, refreshUsage, refreshSingleUsage, deleteAccount, renameAccount, importFromFile, importFromCookie, startOAuthLogin, completeOAuthLogin, cancelOAuthLogin } = useAccounts();
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const update = () => { if (!document.hidden) setNow(Date.now()); };
+    const timer = window.setInterval(update, 1000);
+    document.addEventListener("visibilitychange", update);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", update); };
+  }, []);
   const [options, setOptions] = useState<FloatingOptions | null>(null);
   const [adding, setAdding] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -106,14 +113,15 @@ export default function App() {
           <button onClick={() => { void changeTheme(); }} className="text-sm text-gray-500">{theme === "dark" ? "浅色" : "深色"}</button>
         </div>
       </div>
+      <p className="mx-auto mt-3 max-w-5xl text-xs text-gray-500">仅悬浮窗当前显示的账户自动刷新；其他账户只手动刷新。关闭悬浮窗后暂停自动刷新。</p>
     </header>
     <main className="min-h-0 overflow-y-auto" aria-label="账户额度" tabIndex={0}>
       <div className="mx-auto grid w-full max-w-5xl content-start gap-5 px-6 py-6">
       <UpdateChecker />
       {(message || error) && <p role="status" className="text-sm text-amber-600">{message || error}</p>}
       {accounts.length > 5 && <input aria-label="搜索账户" placeholder="搜索账户" value={search} onChange={(event) => setSearch(event.target.value)} className="rounded-lg border border-gray-200 bg-transparent px-3 py-2 dark:border-gray-700" />}
-      {loading ? <p className="text-sm text-gray-500">加载账户中…</p> : ordered.length === 0 ? <p className="text-sm text-gray-500">暂无账户，点击“添加账户”开始查看额度。</p> : ordered.map((account) => <AccountCard key={account.id} account={account} selected={account.id === selected?.id} floatingEnabled={options?.floating_usage_enabled ?? false} refreshInterval={options?.account_usage_refresh_intervals[account.id] ?? 300} onSelect={() => { void selectAccount(account.id); }} onDelete={() => setDeleteId(account.id)} onRefresh={() => refreshSingleUsage(account.id)} onRename={(name) => renameAccount(account.id, name)} />)}
-      <p className="text-xs text-gray-500">仅悬浮窗当前显示的账户自动刷新；其他账户只手动刷新。关闭悬浮窗后暂停自动刷新。</p>
+      {loading ? <p className="text-sm text-gray-500">加载账户中…</p> : ordered.length === 0 ? <p className="text-sm text-gray-500">暂无账户，点击“添加账户”开始查看额度。</p> : ordered.map((account) => <AccountCard key={account.id} account={account} now={now} selected={account.id === selected?.id} floatingEnabled={options?.floating_usage_enabled ?? false} refreshInterval={options?.account_usage_refresh_intervals[account.id] ?? 300} onSelect={() => { void selectAccount(account.id); }} onDelete={() => setDeleteId(account.id)} onRefresh={() => refreshSingleUsage(account.id)} onRename={(name) => renameAccount(account.id, name)} />)}
+
       </div>
     </main>
     {deleteId && <div className="fixed inset-0 z-50 grid place-items-center bg-black/30"><div role="dialog" aria-modal="true" aria-label="删除账户" className="grid gap-5 rounded-xl bg-white p-6 dark:bg-gray-900"><p>删除 {accounts.find((account) => account.id === deleteId)?.name}？</p><div className="grid grid-cols-2 gap-4"><button className="text-sm text-gray-500" onClick={() => setDeleteId(null)}>取消</button><button className="rounded-lg bg-sky-50 px-4 py-2 text-sm text-sky-700" onClick={() => { void removeAccount(deleteId); }}>确认删除</button></div></div></div>}

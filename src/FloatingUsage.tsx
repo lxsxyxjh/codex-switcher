@@ -221,7 +221,7 @@ function FloatingUsage() {
     await menuRef.current?.close();
     const menu = await Menu.new({ items: [
       { text: "打开主界面", action: () => { void invokeBackend("open_main_window"); } },
-      { text: "当前账户自动刷新", enabled: !!displayAccount, items: usageRefreshIntervals.map(({ seconds, label }) => ({ text: label, checked: (options.account_usage_refresh_intervals[displayAccount?.id ?? ""] ?? 300) === seconds, action: () => { void invokeBackend("set_usage_refresh_interval", { accountId: displayAccount?.id, seconds }).catch(console.error); } })) },
+      { text: "自动刷新间隔", enabled: !!displayAccount, items: usageRefreshIntervals.map(({ seconds, label }) => ({ text: label, checked: (options.account_usage_refresh_intervals[displayAccount?.id ?? ""] ?? 300) === seconds, action: () => { void invokeBackend("set_usage_refresh_interval", { accountId: displayAccount?.id, seconds }).catch(console.error); } })) },
       { text: "显示账户", items: [
         { text: "默认查看账户", checked: !accounts.some((account) => account.id === options.floating_usage_account_id), action: () => saveOptions({ accountId: "" }) },
         ...accounts.map((account) => ({ text: `${account.name} (${account.auth_mode === "cookie" ? "Cookie" : "Codex 登录"})`, checked: options.floating_usage_account_id === account.id, action: () => saveOptions({ accountId: account.id }) })),
@@ -306,19 +306,21 @@ function FloatingUsage() {
       } }}
       title={`${displayAccount?.name ?? "未添加账户"}\n${resetHint}${isStale ? "\n刷新失败，保留上次成功数据" : ""}\n右键设置`}
       className="select-none border border-slate-300/80 bg-slate-100/95 text-slate-600 dark:border-slate-600/80 dark:bg-slate-800/95 dark:text-slate-200"
-      style={{ display: "inline-grid", position: collapsed ? "absolute" : "relative", visibility: collapsed ? "hidden" : "visible", pointerEvents: collapsed ? "none" : "auto", gridTemplateColumns: options.floating_usage_vertical ? "max-content auto" : `repeat(${usageWindows.length + 2}, max-content)`, alignItems: "center", width: "max-content", gap: 10 * scale, padding: `${8 * scale}px ${10 * scale}px`, fontSize: 12 * scale, lineHeight: 1.5, borderRadius: 10 * scale }}
+      style={{ display: "inline-grid", position: collapsed ? "absolute" : "relative", visibility: collapsed ? "hidden" : "visible", pointerEvents: collapsed ? "none" : "auto", gridTemplateColumns: options.floating_usage_vertical ? "max-content" : `repeat(${usageWindows.length + 2}, max-content)`, alignItems: "center", width: "max-content", gap: 10 * scale, padding: `${8 * scale}px ${10 * scale}px`, fontSize: 12 * scale, lineHeight: 1.5, borderRadius: 10 * scale }}
     >
       {usageWindows.map((quota) => <span key={quota.key} className="whitespace-nowrap tabular-nums" style={{ gridColumn: options.floating_usage_vertical ? 1 : undefined }}>{quota.label} {mode}{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatUsagePercent(quota.used, options.floating_usage_show_used)}</b></span>)}
-      <span className="whitespace-nowrap tabular-nums" style={{ gridColumn: options.floating_usage_vertical ? 1 : undefined }}>余额{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatCreditsBalance(usage?.credits_balance)}</b></span>
+      <span className="whitespace-nowrap tabular-nums" style={{ gridColumn: options.floating_usage_vertical ? 1 : undefined }}>额度{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatCreditsBalance(usage?.credits_balance)}</b></span>
+      <div className="grid grid-flow-col items-center" style={{ gridColumn: options.floating_usage_vertical ? 1 : undefined, justifySelf: options.floating_usage_vertical ? "center" : undefined, gap: 4 * scale }}>
       <button type="button" aria-label="刷新当前账户额度" title={refreshing ? "正在刷新额度…" : isStale ? "刷新失败，显示上次成功数据。点击重新刷新" : "立即更新额度数据"}
         disabled={refreshing || !displayAccount}
         onMouseDown={(event) => event.stopPropagation()}
         onClick={() => { void refreshUsage().catch(console.error); }}
         className="grid place-items-center rounded-lg border-0 bg-transparent text-slate-500 hover:bg-slate-200 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-700"
-        style={{ position: "relative", width: Math.max(24, 24 * scale), height: Math.max(24, 24 * scale), fontSize: Math.max(14, 16 * scale), gridColumn: options.floating_usage_vertical ? 2 : undefined, gridRow: options.floating_usage_vertical ? `1 / ${usageWindows.length + 2}` : undefined }}>
+        style={{ width: Math.max(24, 24 * scale), height: Math.max(24, 24 * scale), fontSize: Math.max(14, 16 * scale) }}>
         <span className={refreshing ? "animate-spin" : undefined}>↻</span>
-        {isStale && <span aria-hidden="true" className="rounded-full bg-amber-500" style={{ position: "absolute", top: 2 * scale, right: 2 * scale, width: 4 * scale, height: 4 * scale }} />}
       </button>
+      {isStale && <span role="img" aria-label="刷新失败，保留上次成功数据" title="刷新失败，保留上次成功数据" className="rounded-full bg-amber-500" style={{ width: 4 * scale, height: 4 * scale }} />}
+      </div>
     </div>
     </div>
   );

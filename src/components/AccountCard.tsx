@@ -10,6 +10,7 @@ interface AccountCardProps {
   selected: boolean;
   floatingEnabled: boolean;
   refreshInterval: number;
+  now: number;
   onSelect: () => void;
   onDelete: () => void;
   onRefresh: () => Promise<unknown>;
@@ -18,13 +19,8 @@ interface AccountCardProps {
 
 function formatLastRefresh(date: Date | null): string {
   if (!date) return "从未刷新";
-  const now = new Date();
-  const diff = Math.floor((now.getTime() - date.getTime()) / 1000);
-  if (diff < 5) return "刚刚";
-  if (diff < 60) return `${diff} 秒前`;
-  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
-  return date.toLocaleDateString("zh-CN");
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 function getSubscriptionStatus(timestamp: string | null | undefined): {
@@ -78,6 +74,7 @@ export function AccountCard({
   selected,
   floatingEnabled,
   refreshInterval,
+  now,
   onSelect,
   onDelete,
   onRefresh,
@@ -96,9 +93,9 @@ export function AccountCard({
     } catch (error) { setIntervalError(String(error)); }
     finally { setIntervalSaving(false); }
   };
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(
-    account.usage && !account.usage.error ? new Date() : null
-  );
+  const fetchedAt = account.usage?.fetched_at;
+  const refreshDate = fetchedAt ? new Date(fetchedAt) : null;
+  const lastRefresh = refreshDate && Number.isFinite(refreshDate.getTime()) ? refreshDate : null;
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(account.name);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -109,12 +106,6 @@ export function AccountCard({
       inputRef.current.select();
     }
   }, [isEditing]);
-
-  useEffect(() => {
-    if (account.usage && !account.usage.error) {
-      setLastRefresh(new Date());
-    }
-  }, [account.usage]);
 
   const handleRefresh = async () => {
     if (isRefreshing || account.usageLoading) return;
@@ -240,32 +231,28 @@ export function AccountCard({
           >
             {planDisplay}
           </span>
-          {floatingDisplayed && <span className="text-xs text-sky-600 dark:text-sky-400">悬浮窗显示中</span>}
         </div>
       </div>
 
       {/* Usage */}
       <div className="mb-3">
-        <UsageBar usage={account.usage} loading={isRefreshing || account.usageLoading} />
-        {isTauriRuntime() && <label className="mt-3 inline-block text-xs text-gray-500">{autoRefreshActive ? "自动刷新（悬浮窗显示中）" : "仅手动刷新"} {autoRefreshActive && <select aria-label={`${account.name}自动刷新间隔`} value={refreshInterval} disabled={intervalSaving} onChange={(event) => { void changeInterval(Number(event.target.value)); }} className="ml-2 rounded-lg border border-gray-200 bg-transparent px-2 py-1 dark:border-gray-700">{usageRefreshIntervals.map(({ seconds, label }) => <option key={seconds} value={seconds}>{label}</option>)}</select>}</label>}
+        <UsageBar usage={account.usage} loading={isRefreshing || account.usageLoading} now={now} />
+        <div className="mt-3 grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2 text-xs">
+        {isTauriRuntime() && <label className="inline-block text-xs text-gray-500">{autoRefreshActive ? "自动刷新（悬浮窗显示中）" : "仅手动刷新"} {autoRefreshActive && <select aria-label={`${account.name}自动刷新间隔`} value={refreshInterval} disabled={intervalSaving} onChange={(event) => { void changeInterval(Number(event.target.value)); }} className="ml-2 rounded-lg border border-gray-200 bg-transparent px-2 py-1 dark:border-gray-700">{usageRefreshIntervals.map(({ seconds, label }) => <option key={seconds} value={seconds}>{label}</option>)}</select>}</label>}
+        <span className="text-gray-400 dark:text-gray-500">最近更新：{formatLastRefresh(lastRefresh)}{lastRefresh && ` · 距现在 ${Math.max(0, Math.floor((now - lastRefresh.getTime()) / 1000))} 秒`}</span>
+        </div>
         {intervalError && <p role="alert" className="text-xs text-red-500">{intervalError}</p>}
       </div>
 
-      {/* Last refresh time */}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs mb-3">
-        <div className="text-gray-400 dark:text-gray-500">
-          最近更新：{formatLastRefresh(lastRefresh)}
+      {showSubscriptionStatus && (
+        <div className={`mb-3 text-right text-xs ${subscriptionStatus.className}`}>
+          {subscriptionStatus.label}
         </div>
-        {showSubscriptionStatus && (
-          <div className={`text-right ${subscriptionStatus.className}`}>
-            {subscriptionStatus.label}
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Actions */}
       <div className="flex gap-2 mt-3">
-        <button onClick={onSelect} disabled={selected} className="grow rounded-lg bg-sky-50 px-4 py-2 text-sm text-sky-700 disabled:opacity-60 dark:bg-sky-900/20 dark:text-sky-300">{selected ? "当前查看账户" : "查看此账户额度"}</button>
+        <button onClick={onSelect} disabled={selected} className="grow rounded-lg bg-sky-50 px-4 py-2 text-sm text-sky-700 disabled:opacity-60 dark:bg-sky-900/20 dark:text-sky-300">{selected ? floatingEnabled ? "悬浮窗显示中" : "悬浮窗所选账户" : "切换悬浮窗账户"}</button>
         <button
           onClick={onDelete}
           className="px-3 py-2 text-sm rounded-lg bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-300 transition-colors"

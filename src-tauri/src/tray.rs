@@ -84,7 +84,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 
     let builder = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
-        .tooltip("Codex Switcher")
+
         .menu(&menu)
         .on_menu_event(handle_menu_event);
 
@@ -627,19 +627,10 @@ fn refresh_menu_on_main_thread<R: Runtime>(app: &AppHandle<R>) {
                 settings.floating_usage_account_id.as_deref().filter(|id| store.accounts.iter().any(|account| account.id == *id)).or_else(|| account_for_usage_poll(&store).map(|account| account.id.as_str())),
                 settings.tray_display_mode,
             );
-            let displayed = settings.floating_usage_account_id.as_deref()
-                .and_then(|id| store.accounts.iter().find(|account| account.id == id))
-                .or_else(|| store.active_account_id.as_deref().and_then(|id| store.accounts.iter().find(|account| account.id == id)))
-                .or_else(|| store.accounts.iter().find(|account| matches!(&account.auth_data, AuthData::Cookie { .. }))).or_else(|| store.accounts.first());
-            let usage = TRAY_USAGE.lock().ok().and_then(|cache| displayed.and_then(|account| cache.get(&account.id).cloned()));
-            let tooltip = usage_tooltip(usage.as_ref());
             let menu = build_menu(app, &store).map_err(|error| error.to_string())?;
-            Ok((menu, title, settings.tray_display_mode, tooltip))
+            Ok((menu, title, settings.tray_display_mode))
         }) {
-        Ok((menu, title, mode, tooltip)) => {
-            if let Err(error) = tray.set_tooltip(Some(&tooltip)) {
-                eprintln!("Failed to refresh tray tooltip: {error}");
-            }
+        Ok((menu, title, mode)) => {
             if let Err(error) = tray.set_menu(Some(menu)) {
                 eprintln!("Failed to refresh tray menu: {error}");
             }
@@ -701,27 +692,6 @@ fn refresh_tray_display<R: Runtime>(
             }
         }
     }
-}
-
-fn usage_tooltip(usage: Option<&UsageInfo>) -> String {
-    let Some(usage) = usage else {
-        return "Codex Switcher\n额度尚未获取".into();
-    };
-    let windows = usage_title(
-        usage.primary_used_percent,
-        usage.primary_window_minutes,
-        usage.secondary_used_percent,
-        usage.secondary_window_minutes,
-    );
-    let balance = usage.credits_balance.as_deref().map(str::trim).filter(|value| !value.is_empty());
-    let credits = balance.map(|value| {
-        value.parse::<f64>().ok().filter(|number| number.is_finite())
-            .map(|number| if number.fract() == 0.0 { format!("{number:.0}") } else { format!("{number:.2}") })
-            .unwrap_or_else(|| value.to_string())
-    }).unwrap_or_else(|| "--".into());
-    let seconds = load_app_settings().unwrap_or_default().account_usage_refresh_intervals.get(&usage.account_id).copied().unwrap_or(300);
-    let status = if usage.error.is_some() { "刷新失败，保留上次数据".into() } else { format!("每 {seconds} 秒更新额度数据") };
-    format!("Codex Switcher\n剩余 {windows} · 余额 {credits}\n{status}")
 }
 
 fn show_main_window<R: Runtime>(app: &AppHandle<R>) {

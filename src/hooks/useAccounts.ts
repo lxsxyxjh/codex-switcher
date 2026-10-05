@@ -80,7 +80,7 @@ export function useAccounts() {
     ) => {
       const list = accountList ?? accountsRef.current;
       const dueAccounts = list.filter(
-        (account) => !metadataRefreshInFlightRef.current.has(account.id)
+        (account) => account.auth_mode === "chat_g_p_t" && !metadataRefreshInFlightRef.current.has(account.id)
       );
 
       // Mark attempts before starting requests so overlapping refresh cycles
@@ -133,7 +133,7 @@ export function useAccounts() {
         const usage = await invokeBackend<UsageInfo>("get_usage", { accountId, source });
         setAccounts((prev) =>
           prev.map((a) =>
-            a.id === accountId ? { ...a, usage: mergeUsageUpdate(a.usage, usage), usageLoading: false } : a
+            a.id === accountId ? { ...a, plan_type: usage.plan_type ?? a.plan_type, usage: mergeUsageUpdate(a.usage, usage), usageLoading: false } : a
           )
         );
 
@@ -177,26 +177,16 @@ export function useAccounts() {
 
   const deleteAccount = useCallback(
     async (accountId: string) => {
-      try {
-        await invokeBackend("delete_account", { accountId });
-        // Account activation can change while deletion is in flight. Re-read
-        // backend metadata without discarding the latest cached usage.
-        await loadAccounts();
-      } catch (err) {
-        throw err;
-      }
+      await invokeBackend("delete_account", { accountId });
+      await loadAccounts();
     },
     [loadAccounts]
   );
 
   const renameAccount = useCallback(
     async (accountId: string, newName: string) => {
-      try {
-        await invokeBackend("rename_account", { accountId, newName });
-        await loadAccounts(); // Preserve usage data
-      } catch (err) {
-        throw err;
-      }
+      await invokeBackend("rename_account", { accountId, newName });
+      await loadAccounts();
     },
     [loadAccounts]
   );
@@ -233,7 +223,7 @@ export function useAccounts() {
       setAccounts((current) =>
         current.map((account) =>
           account.id === added.account.id
-            ? { ...account, usage: added.usage, usageLoading: false }
+            ? { ...account, plan_type: added.usage.plan_type ?? account.plan_type, usage: added.usage, usageLoading: false }
             : account
         )
       );
@@ -242,26 +232,14 @@ export function useAccounts() {
   );
 
   const startOAuthLogin = useCallback(async (accountName: string) => {
-    try {
-      const info = await invokeBackend<{ auth_url: string; callback_port: number }>(
-        "start_login",
-        { accountName }
-      );
-      return info;
-    } catch (err) {
-      throw err;
-    }
+    return invokeBackend<{ auth_url: string; callback_port: number }>("start_login", { accountName });
   }, []);
 
   const completeOAuthLogin = useCallback(async () => {
-    try {
-      const account = await invokeBackend<AccountInfo>("complete_login");
-      await loadAccounts();
-      await refreshSingleUsage(account.id, "添加登录账户");
-      return account;
-    } catch (err) {
-      throw err;
-    }
+    const account = await invokeBackend<AccountInfo>("complete_login");
+    await loadAccounts();
+    await refreshSingleUsage(account.id, "添加登录账户");
+    return account;
   }, [loadAccounts, refreshSingleUsage]);
 
   const cancelOAuthLogin = useCallback(async () => {
@@ -301,6 +279,7 @@ export function useAccounts() {
           if (!usage) return account;
           return {
             ...account,
+            plan_type: usage.plan_type ?? account.plan_type,
             usage: mergeUsageUpdate(account.usage, usage),
             usageLoading: false,
           };

@@ -1,6 +1,7 @@
 import type { AccountInfo, UsageInfo } from "../types";
 
 export function mergeUsageUpdate(previous: UsageInfo | undefined, update: UsageInfo): UsageInfo {
+  if (previous?.account_id === update.account_id && previous.fetched_at && update.fetched_at && Date.parse(update.fetched_at) < Date.parse(previous.fetched_at)) return previous;
   return update.error && previous?.account_id === update.account_id
     ? { ...previous, error: update.error }
     : update;

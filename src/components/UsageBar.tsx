@@ -4,6 +4,7 @@ import { formatCreditsBalance, formatQuotaResetTime, formatUsagePercent } from "
 interface UsageBarProps {
   usage?: UsageInfo;
   loading?: boolean;
+  now?: number;
 }
 
 function formatWindowDuration(minutes: number | null | undefined): string {
@@ -19,11 +20,13 @@ function RateLimitBar({
   usedPercent,
   windowMinutes,
   resetsAt,
+  now,
 }: {
   label: string;
   usedPercent: number;
   windowMinutes?: number | null;
   resetsAt?: number | null;
+  now?: number;
 }) {
   // Calculate remaining percentage
   const remainingPercent = Math.max(0, Math.min(100, 100 - usedPercent));
@@ -37,15 +40,17 @@ function RateLimitBar({
         : "bg-emerald-500";
 
   const windowLabel = formatWindowDuration(windowMinutes);
-  const resetLabel = formatQuotaResetTime(resetsAt);
+  const resetLabel = formatQuotaResetTime(resetsAt, now);
 
   return (
-    <div className="space-y-1">
-      <div className="grid grid-cols-[1fr_auto] gap-2 text-xs text-gray-500 dark:text-gray-400">
-        <span>{windowLabel ? `${windowLabel}额度` : label}</span>
+    <div className="space-y-2 py-2">
+      <div className="grid grid-cols-[1fr_auto] items-start gap-3 text-xs text-gray-500 dark:text-gray-400">
+        <div>
+          <span>{windowLabel ? `${windowLabel}额度` : label}</span>
+          {resetLabel && <span className="ml-3 inline-block text-gray-400 dark:text-gray-500">重置：{resetLabel}</span>}
+        </div>
         <span>剩余 {formatUsagePercent(usedPercent)}</span>
       </div>
-      {resetLabel && <div className="text-xs text-gray-400 dark:text-gray-500">重置：{resetLabel}</div>}
       <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
         <div
           className={`h-full transition-all duration-300 ${colorClass}`}
@@ -56,7 +61,7 @@ function RateLimitBar({
   );
 }
 
-export function UsageBar({ usage, loading }: UsageBarProps) {
+export function UsageBar({ usage, loading, now }: UsageBarProps) {
   if (loading && !usage) {
     return (
       <div className="space-y-2">
@@ -108,6 +113,7 @@ export function UsageBar({ usage, loading }: UsageBarProps) {
           usedPercent={usage.primary_used_percent!}
           windowMinutes={usage.primary_window_minutes}
           resetsAt={usage.primary_resets_at}
+          now={now}
         />
       )}
       {hasSecondary && (
@@ -116,11 +122,13 @@ export function UsageBar({ usage, loading }: UsageBarProps) {
           usedPercent={usage.secondary_used_percent!}
           windowMinutes={usage.secondary_window_minutes}
           resetsAt={usage.secondary_resets_at}
+          now={now}
         />
       )}
       {hasCredits && (
-        <div className="text-xs text-gray-500 dark:text-gray-400">
-          余额：{formatCreditsBalance(usage.credits_balance)}
+        <div className="grid grid-cols-[max-content_max-content] items-center gap-3 py-4 text-xs text-gray-500 dark:text-gray-400">
+          <span>剩余额度 <span className="text-gray-400 dark:text-gray-500">(Credits)</span></span>
+          <strong className="text-sm font-medium tabular-nums text-gray-700 dark:text-gray-200">{formatCreditsBalance(usage.credits_balance)}</strong>
         </div>
       )}
     </div>

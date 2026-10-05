@@ -638,6 +638,8 @@ impl AccountInfo {
 /// Usage information for an account
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageInfo {
+    #[serde(default)]
+    pub fetched_at: Option<DateTime<Utc>>,
     /// Account ID
     pub account_id: String,
     /// Plan type
@@ -658,7 +660,7 @@ pub struct UsageInfo {
     pub has_credits: Option<bool>,
     /// Whether credits are unlimited
     pub unlimited_credits: Option<bool>,
-    /// Credit balance string (e.g., "$10.50")
+    /// Remaining Codex Credits balance
     pub credits_balance: Option<String>,
     /// Error message if usage fetch failed
     pub error: Option<String>,
@@ -678,6 +680,7 @@ impl UsageInfo {
 
     pub fn error(account_id: String, error: String) -> Self {
         Self {
+            fetched_at: None,
             account_id,
             plan_type: None,
             primary_used_percent: None,
