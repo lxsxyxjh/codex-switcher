@@ -65,7 +65,7 @@ pub fn get_floating_usage_enabled() -> Option<bool> {
 }
 
 #[tauri::command]
-pub fn set_floating_usage_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+pub async fn set_floating_usage_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
     #[cfg(not(target_os = "windows"))]
     {
         let _ = (app, enabled);
@@ -95,7 +95,7 @@ pub fn set_floating_usage_enabled(app: AppHandle, enabled: bool) -> Result<bool,
         let result = if enabled {
             crate::tray::show_floating_usage_window(&app)
         } else {
-            crate::tray::close_floating_usage_window(&app)
+            crate::tray::hide_floating_usage_window(&app)
         };
         if let Err(error) = result {
             settings.floating_usage_enabled = previous;

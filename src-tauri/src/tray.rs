@@ -13,7 +13,7 @@ use tauri::{
 };
 
 use crate::{
-    api::usage::get_account_usage,
+    api::usage::{get_account_usage, refresh_all_usage},
     auth::{get_accounts_file, load_accounts, load_app_settings, save_app_settings},
     commands::{
         is_codex_running_switch_block, restore_main_window, switch_account_by_id,
@@ -266,9 +266,9 @@ pub fn show_floating_usage_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Resu
 }
 
 #[cfg(target_os = "windows")]
-pub fn close_floating_usage_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+pub fn hide_floating_usage_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window(FLOATING_USAGE_WINDOW) {
-        window.close()?;
+        window.hide()?;
     }
     Ok(())
 }
@@ -840,28 +840,27 @@ fn account_for_usage_poll(store: AccountsStore) -> Option<StoredAccount> {
     })
 }
 
-/// Poll usage while the main window is hidden so tray and floating views stay fresh.
+/// Desktop windows share one periodic refresh. Hidden windows only need the displayed account.
 fn poll_active_account_usage<R: Runtime>(app: AppHandle<R>) {
     std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(60));
+        let Ok(store) = load_accounts() else {
+            continue;
+        };
         let main_window_visible = app
             .get_webview_window("main")
             .and_then(|window| window.is_visible().ok())
             .unwrap_or(false);
-        let account = if main_window_visible {
-            None
-        } else {
-            load_accounts().ok().and_then(account_for_usage_poll)
-        };
-
-        if let Some(account) = account {
+        if main_window_visible {
+            let usages = tauri::async_runtime::block_on(refresh_all_usage(&store.accounts));
+            ingest_usage(&app, usages);
+        } else if let Some(account) = account_for_usage_poll(store) {
             match tauri::async_runtime::block_on(get_account_usage(&account)) {
                 // Keep the last known title on transient fetch errors.
                 Ok(usage) => ingest_usage(&app, vec![usage]),
                 Err(error) => eprintln!("Failed to poll usage for tray title: {error}"),
             }
         }
-
-        std::thread::sleep(Duration::from_secs(60));
     });
 }
 

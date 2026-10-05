@@ -464,15 +464,15 @@ export function useAccounts() {
   useEffect(() => {
     loadAccounts().then((accountList) => {
       void refreshUsage(accountList);
-      // Populate live expiry immediately. The native background process keeps
-      // its cache current while a desktop webview is hidden or suspended.
-      void refreshMetadata(accountList);
+      if (!isTauriRuntime()) void refreshMetadata(accountList);
     });
     
-    // Auto-refresh usage every 60 seconds (same as official Codex CLI)
-    const usageInterval = setInterval(() => {
-      refreshUsage().catch(() => {});
-    }, 60000);
+    // Desktop refreshes are published by Rust; browser mode owns its timer.
+    const usageInterval = !isTauriRuntime()
+      ? setInterval(() => {
+          refreshUsage().catch(() => {});
+        }, 60000)
+      : undefined;
 
     const metadataInterval = !isTauriRuntime()
       ? setInterval(() => {
@@ -481,13 +481,15 @@ export function useAccounts() {
       : undefined;
     
     return () => {
-      clearInterval(usageInterval);
+      if (usageInterval !== undefined) clearInterval(usageInterval);
       if (metadataInterval !== undefined) clearInterval(metadataInterval);
     };
   }, [loadAccounts, refreshMetadata, refreshUsage]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let unlistenUsage: (() => void) | undefined;
+    let cancelled = false;
 
     void (async () => {
       if (!("__TAURI_INTERNALS__" in window)) return;
@@ -495,9 +497,31 @@ export function useAccounts() {
       unlisten = await listen("accounts-changed", () => {
         void loadAccounts(true);
       });
+      unlistenUsage = await listen<UsageInfo[]>("usage-updated", ({ payload }) => {
+        const updates = new Map(payload.map((usage) => [usage.account_id, usage]));
+        setAccounts((previous) => previous.map((account) => {
+          const usage = updates.get(account.id);
+          if (!usage) return account;
+          return {
+            ...account,
+            usage: usage.error && account.usage
+              ? { ...account.usage, error: usage.error }
+              : usage,
+            usageLoading: false,
+          };
+        }));
+      });
+      if (cancelled) {
+        unlisten();
+        unlistenUsage();
+      }
     })();
 
-    return () => unlisten?.();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+      unlistenUsage?.();
+    };
   }, [loadAccounts]);
 
   return {

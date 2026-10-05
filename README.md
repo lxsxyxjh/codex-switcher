@@ -87,7 +87,9 @@ pnpm tauri build
 > (`sh ./scripts/tauri.sh`) and will not work in PowerShell/CMD. Use the
 > `tauri:win` script instead: `pnpm tauri:win dev` and `pnpm tauri:win build`.
 > For a local Windows executable without installers or updater signatures, run
-> `pnpm tauri:win:exe`. It creates `src-tauri/target/release/codex-switcher.exe`.
+> `pnpm tauri:win:exe`. It loads the installed Visual Studio C++ build environment
+> and reuses `src-tauri/target/exe-only` for build caching. The executable is
+> `src-tauri/target/exe-only/release/codex-switcher.exe`.
 
 The built application will be in `src-tauri/target/release/bundle/`.
 
