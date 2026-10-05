@@ -312,14 +312,15 @@ function FloatingUsage() {
       style={{ display: "inline-grid", position: collapsed ? "absolute" : "relative", visibility: collapsed ? "hidden" : "visible", pointerEvents: collapsed ? "none" : "auto", gridTemplateColumns: options.floating_usage_vertical ? "max-content auto" : `repeat(${usageWindows.length + 2}, max-content)`, alignItems: "center", width: "max-content", gap: 10 * scale, padding: `${8 * scale}px ${10 * scale}px`, fontSize: 12 * scale, lineHeight: 1.5, borderRadius: 10 * scale }}
     >
       {usageWindows.map((quota) => <span key={quota.key} className="whitespace-nowrap tabular-nums" style={{ gridColumn: options.floating_usage_vertical ? 1 : undefined }}>{quota.label} {mode}{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatUsagePercent(quota.used, options.floating_usage_show_used)}</b></span>)}
-      <span className="whitespace-nowrap tabular-nums" style={{ gridColumn: options.floating_usage_vertical ? 1 : undefined }}>{isStale && <span className="text-amber-500">• </span>}余额{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatCreditsBalance(usage?.credits_balance)}</b></span>
-      <button type="button" aria-label="刷新当前账户额度" title={refreshing ? "正在刷新额度…" : "立即更新额度数据"}
+      <span className="whitespace-nowrap tabular-nums" style={{ gridColumn: options.floating_usage_vertical ? 1 : undefined }}>余额{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatCreditsBalance(usage?.credits_balance)}</b></span>
+      <button type="button" aria-label="刷新当前账户额度" title={refreshing ? "正在刷新额度…" : isStale ? "刷新失败，显示上次成功数据。点击重新刷新" : "立即更新额度数据"}
         disabled={refreshing || !displayAccount}
         onMouseDown={(event) => event.stopPropagation()}
         onClick={() => { void refreshUsage().catch(console.error); }}
         className="grid place-items-center rounded-lg border-0 bg-transparent text-slate-500 hover:bg-slate-200 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-700"
-        style={{ width: Math.max(24, 24 * scale), height: Math.max(24, 24 * scale), fontSize: Math.max(14, 16 * scale), gridColumn: options.floating_usage_vertical ? 2 : undefined, gridRow: options.floating_usage_vertical ? `1 / ${usageWindows.length + 2}` : undefined }}>
+        style={{ position: "relative", width: Math.max(24, 24 * scale), height: Math.max(24, 24 * scale), fontSize: Math.max(14, 16 * scale), gridColumn: options.floating_usage_vertical ? 2 : undefined, gridRow: options.floating_usage_vertical ? `1 / ${usageWindows.length + 2}` : undefined }}>
         <span className={refreshing ? "animate-spin" : undefined}>↻</span>
+        {isStale && <span aria-hidden="true" className="rounded-full bg-amber-500" style={{ position: "absolute", top: 2 * scale, right: 2 * scale, width: 4 * scale, height: 4 * scale }} />}
       </button>
     </div>
     </div>
