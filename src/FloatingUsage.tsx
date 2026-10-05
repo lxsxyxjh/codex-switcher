@@ -115,7 +115,7 @@ function FloatingUsage() {
         onMouseDown={(event) => {
           if (event.button === 0) void currentWindow?.startDragging();
         }}
-        title={isStale ? "Usage refresh failed; showing the last successful values" : undefined}
+        title={isStale ? "额度刷新失败，当前显示上次成功获取的数据" : undefined}
         className="flex h-11 w-full select-none items-center justify-between gap-2 overflow-hidden rounded-xl border border-gray-200 bg-white px-3 text-xs text-gray-700 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
       >
         <span className="whitespace-nowrap font-medium tabular-nums">
@@ -128,7 +128,7 @@ function FloatingUsage() {
         <span className="h-4 w-px shrink-0 bg-gray-200 dark:bg-gray-700" />
         <span className="flex min-w-0 items-center gap-1 whitespace-nowrap font-medium">
           {isStale && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />}
-          <span>Credits</span>
+          <span>余额</span>
           <span className="truncate font-semibold tabular-nums text-gray-900 dark:text-gray-100">
             {formatCreditsBalance(usage?.credits_balance)}
           </span>

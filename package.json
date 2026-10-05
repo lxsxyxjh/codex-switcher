@@ -15,6 +15,7 @@
     "preview": "vite preview",
     "tauri": "sh ./scripts/tauri.sh",
     "tauri:win": "tauri",
+    "tauri:win:exe": "tauri build --no-bundle",
     "lan": "pnpm build && cargo run --manifest-path src-tauri/Cargo.toml --bin codex-web",
     "version:bump": "node scripts/bump-version.mjs",
     "version:patch": "node scripts/bump-version.mjs patch",

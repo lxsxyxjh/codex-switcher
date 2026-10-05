@@ -23,6 +23,7 @@ use commands::{
     save_floating_usage_position, set_floating_usage_enabled, set_masked_account_ids, start_login,
     switch_account, warmup_account, warmup_all_accounts,
 };
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -44,20 +45,30 @@ pub fn run() {
             #[cfg(desktop)]
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    #[cfg(target_os = "macos")]
-                    if commands::should_prompt_for_close_behavior() {
-                        let payload = commands::window::next_close_behavior_prompt_payload();
-                        let app_handle = tauri::Manager::app_handle(window);
-                        commands::window::schedule_close_behavior_prompt_fallback(
-                            app_handle.clone(),
-                            payload.request_id,
-                        );
-                        let _ =
-                            window.emit(commands::window::CLOSE_BEHAVIOR_REQUESTED_EVENT, payload);
-                        return;
+                    #[cfg(target_os = "windows")]
+                    {
+                        api.prevent_close();
+                        window.app_handle().exit(0);
                     }
-                    commands::hide_main_window(&tauri::Manager::app_handle(window));
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        api.prevent_close();
+                        #[cfg(target_os = "macos")]
+                        if commands::should_prompt_for_close_behavior() {
+                            let payload = commands::window::next_close_behavior_prompt_payload();
+                            let app_handle = tauri::Manager::app_handle(window);
+                            commands::window::schedule_close_behavior_prompt_fallback(
+                                app_handle.clone(),
+                                payload.request_id,
+                            );
+                            let _ = window.emit(
+                                commands::window::CLOSE_BEHAVIOR_REQUESTED_EVENT,
+                                payload,
+                            );
+                            return;
+                        }
+                        commands::hide_main_window(&tauri::Manager::app_handle(window));
+                    }
                 }
             }
         })

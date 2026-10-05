@@ -63,12 +63,12 @@ function formatResetAt(resetAt: number | null | undefined): string | null {
 
   const diff = resetAt - Math.floor(Date.now() / 1000);
   if (diff <= 0) return "now";
-  if (diff < 60) return `${diff}s`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+  if (diff < 60) return `${diff} 秒`;
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟`;
   if (diff < 86_400) {
-    return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m`;
+    return `${Math.floor(diff / 3600)} 小时 ${Math.floor((diff % 3600) / 60)} 分钟`;
   }
-  return `${Math.floor(diff / 86_400)}d ${Math.floor((diff % 86_400) / 3600)}h`;
+  return `${Math.floor(diff / 86_400)} 天 ${Math.floor((diff % 86_400) / 3600)} 小时`;
 }
 
 function formatExactResetTime(
@@ -81,14 +81,12 @@ function formatExactResetTime(
   const diff = resetAt - Math.floor(Date.now() / 1000);
 
   if (isWeekly && diff > 86_400) {
-    return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+    return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(date);
   }
 
   const minutes = String(date.getMinutes()).padStart(2, "0");
-  const period = date.getHours() >= 12 ? "PM" : "AM";
-  const hour12 = date.getHours() % 12 || 12;
-
-  return `${hour12}:${minutes} ${period}`;
+  const hour = String(date.getHours()).padStart(2, "0");
+  return `${hour}:${minutes}`;
 }
 
 function formatTokens(tokens: number | null | undefined): string {
@@ -150,6 +148,7 @@ function TrayMenu() {
   const [autoWarmupAllEnabled, setAutoWarmupAllEnabled] = useState(readAutoWarmupAllEnabled);
   const [dockDisplayMode, setDockDisplayMode] = useState<DockDisplayMode | null>(null);
   const [floatingUsageEnabled, setFloatingUsageEnabled] = useState<boolean | null>(null);
+  const [floatingUsageUpdating, setFloatingUsageUpdating] = useState(false);
 
   const loadActiveStats = useCallback(async (list: AccountInfo[]) => {
     const active = list.find((account) => account.is_active);
@@ -285,17 +284,22 @@ function TrayMenu() {
   );
 
   const handleFloatingUsageToggle = useCallback(async () => {
-    if (floatingUsageEnabled === null) return;
+    if (floatingUsageEnabled === null || floatingUsageUpdating) return;
     const next = !floatingUsageEnabled;
+    setFloatingUsageUpdating(true);
     try {
       const enabled = await invokeBackend<boolean>("set_floating_usage_enabled", {
         enabled: next,
       });
       setFloatingUsageEnabled(enabled);
+      setError(null);
     } catch (err) {
       setError(formatError(err));
+      void loadFloatingUsageEnabled();
+    } finally {
+      setFloatingUsageUpdating(false);
     }
-  }, [floatingUsageEnabled]);
+  }, [floatingUsageEnabled, floatingUsageUpdating, loadFloatingUsageEnabled]);
 
   // Reload when the tray is reopened or accounts change elsewhere.
   useEffect(() => {
@@ -394,8 +398,8 @@ function TrayMenu() {
           disabled={accounts.length === 0}
           title={
             autoWarmupAllEnabled
-              ? "Disable auto warm-up for all accounts"
-              : "Enable auto warm-up for all accounts"
+              ? "关闭所有账户的自动预热"
+              : "开启所有账户的自动预热"
           }
           className={`ml-auto rounded-md px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
             autoWarmupAllEnabled
@@ -403,12 +407,12 @@ function TrayMenu() {
               : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
           }`}
         >
-          Auto: {autoWarmupAllEnabled ? "on" : "off"}
+          自动预热：{autoWarmupAllEnabled ? "开启" : "关闭"}
         </button>
         <button
           onClick={() => void handleRefresh()}
           disabled={refreshing}
-          title="Refresh usage"
+          title="刷新额度"
           className="flex h-6 w-6 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:opacity-50 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
         >
           <span className={`text-base leading-none ${refreshing ? "inline-block animate-spin" : ""}`}>
@@ -420,27 +424,28 @@ function TrayMenu() {
       <div className="flex-1 overflow-y-auto p-1.5">
         {loading ? (
           <div className="px-2 py-6 text-center text-xs text-gray-500 dark:text-gray-400">
-            Loading...
+            正在加载…
           </div>
         ) : accounts.length === 0 ? (
           <div className="px-2 py-6 text-center text-xs text-gray-500 dark:text-gray-400">
-            No accounts configured
+            尚未添加账户
           </div>
         ) : (
           accounts.map((account) => {
-            const plan = formatPlan(account.plan_type) || (account.auth_mode === "cookie" ? "Cookie" : "");
+            const planValue = formatPlan(account.plan_type) || (account.auth_mode === "cookie" ? "Cookie" : "");
+            const plan = planValue === "Free" ? "免费" : planValue === "Cookie" ? "Cookie 账户" : planValue;
             const usage = usageById[account.id];
             const stats = statsById[account.id];
             const windows =
               usage && !usage.error
                 ? ([
                     {
-                      label: "Session",
+                      label: "5 小时",
                       used: usage.primary_used_percent,
                       resetAt: usage.primary_resets_at,
                     },
                     {
-                      label: "Weekly",
+                      label: "每周",
                       used: usage.secondary_used_percent,
                       resetAt: usage.secondary_resets_at,
                     },
@@ -494,7 +499,7 @@ function TrayMenu() {
                         const remaining = Math.max(0, 100 - w.used);
                         const tone = remainingTone(remaining);
                         const reset = formatResetAt(w.resetAt);
-                        const exactReset = formatExactResetTime(w.resetAt, w.label === "Weekly");
+                        const exactReset = formatExactResetTime(w.resetAt, w.label === "每周");
                         return (
                           <span key={w.label} className="block">
                             <span className="flex items-center gap-1">
@@ -513,11 +518,11 @@ function TrayMenu() {
                             </span>
                             <span className="mt-0.5 flex justify-between text-[11px] text-gray-500 dark:text-gray-400">
                               <span className={tone.text}>
-                                {remaining.toFixed(0)}% left
+                                剩余 {remaining.toFixed(0)}%
                               </span>
                               {reset && (
                                 <span className="shrink-0 whitespace-nowrap">
-                                  {reset === "now" ? "Resets now" : `Resets in ${reset}`}
+                                  {reset === "now" ? "现在重置" : `${reset}后重置`}
                                   {exactReset && ` • ${exactReset}`}
                                 </span>
                               )}
@@ -528,7 +533,7 @@ function TrayMenu() {
                     </span>
                   ) : usage?.error ? (
                     <span className="block truncate text-xs text-red-500 dark:text-red-400">
-                      Usage unavailable
+                      额度暂不可用
                     </span>
                   ) : account.email ? (
                     <span className="block truncate text-xs text-gray-500 dark:text-gray-400">
@@ -537,7 +542,7 @@ function TrayMenu() {
                   ) : null}
                   {(account.is_active || account.auth_mode === "cookie") && (
                     <span className="mt-1 block text-[11px] text-gray-500 dark:text-gray-400">
-                      Credits: {formatCreditsBalance(usage?.credits_balance)}
+                      余额：{formatCreditsBalance(usage?.credits_balance)}
                     </span>
                   )}
                   {account.is_active && stats?.available && (
@@ -546,13 +551,13 @@ function TrayMenu() {
                         <span className="block font-medium text-gray-900 dark:text-gray-100">
                           {formatTokens(sumDailyTokens(stats, 1))}
                         </span>
-                        <span>today</span>
+                        <span>今天</span>
                       </span>
                       <span className="rounded-md bg-white px-2 py-1 text-[11px] text-gray-600 shadow-sm dark:bg-gray-950 dark:text-gray-300">
                         <span className="block font-medium text-gray-900 dark:text-gray-100">
                           {formatTokens(sumDailyTokens(stats, 7))}
                         </span>
-                        <span>last 7 days</span>
+                        <span>最近 7 天</span>
                       </span>
                     </span>
                   )}
@@ -575,7 +580,7 @@ function TrayMenu() {
       {dockDisplayMode && (
         <div className="flex items-center gap-1 border-t border-gray-100 px-1.5 py-1.5 dark:border-gray-800">
           <span className="px-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">
-            Dock
+            程序坞
           </span>
           <button
             onClick={() => void handleDockDisplayMode("show_in_dock")}
@@ -585,7 +590,7 @@ function TrayMenu() {
                 : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
             }`}
           >
-            Show
+            显示
           </button>
           <button
             onClick={() => void handleDockDisplayMode("menu_bar_only")}
@@ -595,7 +600,7 @@ function TrayMenu() {
                 : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
             }`}
           >
-            Menu Bar
+            菜单栏
           </button>
         </div>
       )}
@@ -604,9 +609,10 @@ function TrayMenu() {
         <div className="border-t border-gray-100 px-2 py-1.5 dark:border-gray-800">
           <button
             onClick={() => void handleFloatingUsageToggle()}
-            className="w-full rounded-md px-2 py-1 text-left text-xs text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+            disabled={floatingUsageUpdating}
+            className="w-full rounded-md px-2 py-1 text-left text-xs text-gray-600 transition-colors hover:bg-gray-100 disabled:opacity-50 dark:text-gray-300 dark:hover:bg-gray-800"
           >
-            {floatingUsageEnabled ? "Hide floating usage" : "Show floating usage"}
+            {floatingUsageUpdating ? "正在更新悬浮额度窗…" : floatingUsageEnabled ? "隐藏悬浮额度窗" : "显示悬浮额度窗"}
           </button>
         </div>
       )}
@@ -616,13 +622,13 @@ function TrayMenu() {
           onClick={() => void invokeBackend("open_main_window")}
           className="flex-1 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
         >
-          Open Codex Switcher
+          打开 Codex Switcher
         </button>
         <button
           onClick={() => void invokeBackend("quit_app")}
           className="rounded-lg px-2 py-1.5 text-sm text-gray-500 transition-colors hover:bg-gray-100 hover:text-red-600 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-red-400"
         >
-          Quit
+          退出程序
         </button>
       </div>
     </div>

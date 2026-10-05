@@ -1,4 +1,5 @@
 import type { UsageInfo } from "../types";
+import { formatCreditsBalance } from "../lib/usageDisplay";
 
 interface UsageBarProps {
   usage?: UsageInfo;
@@ -9,31 +10,29 @@ function formatResetTime(resetAt: number | null | undefined): string {
   if (!resetAt) return "";
   const now = Math.floor(Date.now() / 1000);
   const diff = resetAt - now;
-  if (diff <= 0) return "now";
-  if (diff < 60) return `${diff}s`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m`;
+  if (diff <= 0) return "现在";
+  if (diff < 60) return `${diff} 秒`;
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟`;
+  return `${Math.floor(diff / 3600)} 小时 ${Math.floor((diff % 3600) / 60)} 分钟`;
 }
 
 function formatExactResetTime(resetAt: number | null | undefined): string {
   if (!resetAt) return "";
 
   const date = new Date(resetAt * 1000);
-  const month = new Intl.DateTimeFormat(undefined, { month: "long" }).format(date);
+  const month = new Intl.DateTimeFormat("zh-CN", { month: "long" }).format(date);
   const day = date.getDate();
   const minutes = String(date.getMinutes()).padStart(2, "0");
-  const period = date.getHours() >= 12 ? "PM" : "AM";
-  const hour12 = date.getHours() % 12 || 12;
-
-  return `${month} ${day}, ${hour12}:${minutes} ${period}`;
+  const hour = String(date.getHours()).padStart(2, "0");
+  return `${month}${day}日 ${hour}:${minutes}`;
 }
 
 function formatWindowDuration(minutes: number | null | undefined): string {
   if (!minutes) return "";
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60) return `${minutes} 分钟`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
+  if (hours < 24) return `${hours} 小时`;
+  return `${Math.floor(hours / 24)} 天`;
 }
 
 function RateLimitBar({
@@ -65,10 +64,10 @@ function RateLimitBar({
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
-        <span>{windowLabel ? `${windowLabel} limit` : label}</span>
+        <span>{windowLabel ? `${windowLabel}额度` : label}</span>
         <span>
-          {remainingPercent.toFixed(0)}% left
-          {resetLabel && ` • resets ${resetLabel}`}
+          剩余 {remainingPercent.toFixed(0)}%
+          {resetLabel && ` · ${resetLabel}后重置`}
           {resetLabel && exactResetLabel && ` (${exactResetLabel})`}
         </span>
       </div>
@@ -87,7 +86,7 @@ export function UsageBar({ usage, loading }: UsageBarProps) {
     return (
       <div className="space-y-2">
         <div className="text-xs text-gray-400 dark:text-gray-500 italic animate-pulse">
-          Fetching usage...
+          正在获取额度…
         </div>
         <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden animate-pulse">
           <div className="h-full w-2/3 bg-gray-200 dark:bg-gray-700"></div>
@@ -99,7 +98,7 @@ export function UsageBar({ usage, loading }: UsageBarProps) {
   if (!usage) {
     return (
       <div className="text-xs text-gray-400 dark:text-gray-500 italic py-1 animate-pulse">
-        Fetching usage...
+        正在获取额度…
       </div>
     );
   }
@@ -107,7 +106,11 @@ export function UsageBar({ usage, loading }: UsageBarProps) {
   if (usage.error) {
     return (
       <div className="text-xs text-gray-400 dark:text-gray-500 italic py-1">
-        {usage.error}
+        {usage.error
+          .replace(/^API error:\s*/i, "接口错误：")
+          .replace(/Unauthorized/gi, "未授权")
+          .replace(/Forbidden/gi, "禁止访问")
+          .replace(/Not Found/gi, "未找到")}
       </div>
     );
   }
@@ -118,7 +121,7 @@ export function UsageBar({ usage, loading }: UsageBarProps) {
   if (!hasPrimary && !hasSecondary) {
     return (
       <div className="text-xs text-gray-400 dark:text-gray-500 italic py-1">
-        No rate limit data
+        暂无额度数据
       </div>
     );
   }
@@ -127,7 +130,7 @@ export function UsageBar({ usage, loading }: UsageBarProps) {
     <div className="space-y-2">
       {hasPrimary && (
         <RateLimitBar
-          label="5h Limit"
+          label="5 小时额度"
           usedPercent={usage.primary_used_percent!}
           windowMinutes={usage.primary_window_minutes}
           resetsAt={usage.primary_resets_at}
@@ -135,15 +138,15 @@ export function UsageBar({ usage, loading }: UsageBarProps) {
       )}
       {hasSecondary && (
         <RateLimitBar
-          label="Weekly Limit"
+          label="每周额度"
           usedPercent={usage.secondary_used_percent!}
           windowMinutes={usage.secondary_window_minutes}
           resetsAt={usage.secondary_resets_at}
         />
       )}
-      {usage.credits_balance && (
+      {usage.credits_balance !== null && usage.credits_balance !== undefined && (
         <div className="text-xs text-gray-500 dark:text-gray-400">
-          Credits: {usage.credits_balance}
+          余额：{formatCreditsBalance(usage.credits_balance)}
         </div>
       )}
     </div>

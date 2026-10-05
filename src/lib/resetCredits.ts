@@ -42,12 +42,13 @@ export function formatResetCreditDateTime(
   const expiry = new Date(expiresAt);
   if (Number.isNaN(expiry.getTime())) return "Expiry unavailable";
 
-  return new Intl.DateTimeFormat(options.locale, {
+  return new Intl.DateTimeFormat(options.locale ?? "zh-CN", {
     month: "short",
     day: "numeric",
     ...(options.compact ? {} : { year: "numeric" }),
     hour: "numeric",
     minute: "2-digit",
+    hourCycle: "h23",
     ...(options.timeZone ? { timeZone: options.timeZone } : {}),
   }).format(expiry);
 }

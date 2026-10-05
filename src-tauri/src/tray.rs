@@ -290,6 +290,7 @@ fn create_floating_usage_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result
     .decorations(false)
     .transparent(true)
     .always_on_top(true)
+    .focusable(false)
     .skip_taskbar(true)
     .visible(false)
     .build()?;
