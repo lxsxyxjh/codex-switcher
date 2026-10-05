@@ -21,3 +21,4 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+/codex-switcher.iml
