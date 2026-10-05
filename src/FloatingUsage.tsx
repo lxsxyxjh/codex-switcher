@@ -30,7 +30,11 @@ function FloatingUsage() {
   const menuRef = useRef<import("@tauri-apps/api/menu").Menu | null>(null);
   const [options, setOptions] = useState<FloatingOptions>({ floating_usage_enabled: false, floating_usage_scale: 100, floating_usage_account_id: null, floating_usage_show_used: false });
   const loadOptions = useCallback(async () => {
-    setOptions(await invokeBackend<FloatingOptions>("get_floating_usage_options"));
+    try {
+      setOptions(await invokeBackend<FloatingOptions>("get_floating_usage_options"));
+    } catch (error) {
+      console.error("Failed to load floating usage settings:", error);
+    }
   }, []);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [usageById, setUsageById] = useState<Record<string, UsageInfo>>({});
@@ -111,12 +115,12 @@ function FloatingUsage() {
         return;
       }
       await Promise.all([loadAccounts(), loadCachedUsage(), loadOptions()]);
-    })();
+    })().catch((error) => console.error("Failed to initialize floating usage:", error));
 
     return () => {
       disposed = true;
       unlistenSettings?.();
-      void menuRef.current?.close();
+      void menuRef.current?.close().catch(console.error);
       if (savePositionTimer !== undefined) window.clearTimeout(savePositionTimer);
       unlistenUsage?.();
       unlistenAccounts?.();
@@ -188,11 +192,11 @@ function FloatingUsage() {
       onContextMenu={(event) => { event.preventDefault(); void showContextMenu().catch(console.error); }}
       onMouseDown={(event) => { if (event.button === 0) void currentWindow?.startDragging().catch(console.error); }}
       title={`${displayAccount?.name ?? "未添加账户"} · ${mode}百分比${isStale ? " · 刷新失败，保留上次成功数据" : ""} · 右键设置`}
-      className="select-none bg-white/95 text-gray-700 dark:bg-gray-900/95 dark:text-gray-200"
+      className="select-none border border-slate-300/80 bg-slate-100/95 text-slate-600 dark:border-slate-600/80 dark:bg-slate-800/95 dark:text-slate-200"
       style={{ display: "inline-grid", gridTemplateColumns: "repeat(3, max-content)", width: "max-content", gap: 10 * scale, padding: `${8 * scale}px ${10 * scale}px`, fontSize: 12 * scale, lineHeight: 1.5, borderRadius: 10 * scale }}
     >
-      <span className="whitespace-nowrap tabular-nums">5h {mode} <b>{remainingPercent(usage?.primary_used_percent, options.floating_usage_show_used)}</b></span>
-      <span className="whitespace-nowrap tabular-nums">7d {mode} <b>{remainingPercent(usage?.secondary_used_percent, options.floating_usage_show_used)}</b></span>
+      <span className="whitespace-nowrap tabular-nums">5h {mode} <b>{remainingPercent(usage?.primary_window_minutes == null || usage.primary_window_minutes === 300 ? usage?.primary_used_percent : undefined, options.floating_usage_show_used)}</b></span>
+      <span className="whitespace-nowrap tabular-nums">7d {mode} <b>{remainingPercent(usage?.secondary_window_minutes == null || usage.secondary_window_minutes === 10080 ? usage?.secondary_used_percent : undefined, options.floating_usage_show_used)}</b></span>
       <span className="whitespace-nowrap tabular-nums">{isStale && <span className="text-amber-500">• </span>}余额 <b>{formatCreditsBalance(usage?.credits_balance)}</b></span>
     </div>
   );

@@ -196,7 +196,7 @@ export function useAccounts() {
             if (!usage) return account;
             return {
               ...account,
-              usage,
+              usage: usage.error && account.usage ? { ...account.usage, error: usage.error } : usage,
               usageLoading: false,
             };
           })
@@ -236,7 +236,7 @@ export function useAccounts() {
       const usage = await invokeBackend<UsageInfo>("get_usage", { accountId });
       setAccounts((prev) =>
         prev.map((a) =>
-          a.id === accountId ? { ...a, usage, usageLoading: false } : a
+          a.id === accountId ? { ...a, usage: usage.error && a.usage ? { ...a.usage, error: usage.error } : usage, usageLoading: false } : a
         )
       );
       reportUsageToTray([usage]);
@@ -255,7 +255,7 @@ export function useAccounts() {
           a.id === accountId
             ? {
                 ...a,
-                usage: failedUsage,
+                usage: a.usage ? { ...a.usage, error: failedUsage.error } : failedUsage,
                 usageLoading: false,
               }
             : a
@@ -447,7 +447,7 @@ export function useAccounts() {
     const usageInterval = !isTauriRuntime()
       ? setInterval(() => {
           refreshUsage().catch(() => {});
-        }, 60000)
+        }, 5 * 60 * 1000)
       : undefined;
 
     const metadataInterval = !isTauriRuntime()

@@ -19,6 +19,7 @@ pub(super) struct CapturedDesktop {
     target: DesktopTarget,
 }
 
+#[cfg(target_os = "macos")]
 pub(super) fn desktop_pids(desktops: &[CapturedDesktop]) -> Vec<u32> {
     desktops.iter().map(|desktop| desktop.pid).collect()
 }

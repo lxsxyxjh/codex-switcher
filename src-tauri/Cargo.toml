@@ -44,6 +44,7 @@ pbkdf2 = "0.12"
 plist = "1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
+tauri-plugin-single-instance = "2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Registry", "Win32_System_Threading"] }
 
 [patch.crates-io]

@@ -51,7 +51,7 @@ test("reset expiry includes both date and local time", () => {
       locale: "en-US",
       timeZone: "UTC",
     }),
-    "Jul 28, 2026, 8:30 AM",
+    "Jul 28, 2026, 08:30",
   );
   assert.equal(
     formatResetCreditDateTime("2026-07-28T08:30:00Z", {
@@ -59,7 +59,7 @@ test("reset expiry includes both date and local time", () => {
       locale: "en-US",
       timeZone: "UTC",
     }),
-    "Jul 28, 8:30 AM",
+    "Jul 28, 08:30",
   );
 });
 

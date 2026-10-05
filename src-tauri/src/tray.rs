@@ -44,6 +44,7 @@ const TRAY_WIDTH: f64 = 300.0;
 const TRAY_HEIGHT: f64 = 420.0;
 const FLOATING_USAGE_WIDTH: f64 = 260.0;
 const FLOATING_USAGE_HEIGHT: f64 = 48.0;
+const USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const ACCOUNT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 #[derive(Clone, serde::Serialize)]
@@ -619,10 +620,19 @@ fn refresh_menu_on_main_thread<R: Runtime>(app: &AppHandle<R>) {
                 store.active_account_id.as_deref(),
                 settings.tray_display_mode,
             );
+            let displayed = settings.floating_usage_account_id.as_deref()
+                .and_then(|id| store.accounts.iter().find(|account| account.id == id))
+                .or_else(|| store.active_account_id.as_deref().and_then(|id| store.accounts.iter().find(|account| account.id == id)))
+                .or_else(|| store.accounts.iter().find(|account| matches!(&account.auth_data, AuthData::Cookie { .. })));
+            let usage = TRAY_USAGE.lock().ok().and_then(|cache| displayed.and_then(|account| cache.get(&account.id).cloned()));
+            let tooltip = usage_tooltip(usage.as_ref());
             let menu = build_menu(app, &store).map_err(|error| error.to_string())?;
-            Ok((menu, title, settings.tray_display_mode))
+            Ok((menu, title, settings.tray_display_mode, tooltip))
         }) {
-        Ok((menu, title, mode)) => {
+        Ok((menu, title, mode, tooltip)) => {
+            if let Err(error) = tray.set_tooltip(Some(&tooltip)) {
+                eprintln!("Failed to refresh tray tooltip: {error}");
+            }
             if let Err(error) = tray.set_menu(Some(menu)) {
                 eprintln!("Failed to refresh tray menu: {error}");
             }
@@ -684,6 +694,25 @@ fn refresh_tray_display<R: Runtime>(
             }
         }
     }
+}
+
+fn usage_tooltip(usage: Option<&UsageInfo>) -> String {
+    let Some(usage) = usage else {
+        return "Codex Switcher\n额度尚未获取 · 每 5 分钟自动刷新".into();
+    };
+    let windows = usage_title(
+        usage.primary_used_percent,
+        usage.primary_window_minutes,
+        usage.secondary_used_percent,
+        usage.secondary_window_minutes,
+    );
+    let balance = usage.credits_balance.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    let credits = balance.map(|value| {
+        value.parse::<f64>().ok().filter(|number| number.is_finite())
+            .map(|number| if number.fract() == 0.0 { format!("{number:.0}") } else { format!("{number:.2}") })
+            .unwrap_or_else(|| value.to_string())
+    }).unwrap_or_else(|| "--".into());
+    format!("Codex Switcher\n剩余 {windows} · 余额 {credits}\n每 5 分钟自动刷新")
 }
 
 fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
@@ -882,7 +911,7 @@ fn account_for_usage_poll(store: AccountsStore) -> Option<StoredAccount> {
 /// Desktop windows share one periodic refresh. Hidden windows only need the displayed account.
 fn poll_active_account_usage<R: Runtime>(app: AppHandle<R>) {
     std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(60));
+        std::thread::sleep(USAGE_REFRESH_INTERVAL);
         let Ok(store) = load_accounts() else {
             continue;
         };
@@ -901,7 +930,7 @@ fn poll_active_account_usage<R: Runtime>(app: AppHandle<R>) {
             match tauri::async_runtime::block_on(get_account_usage(&account)) {
                 // Keep the last known title on transient fetch errors.
                 Ok(usage) => ingest_usage(&app, vec![usage]),
-                Err(error) => eprintln!("Failed to poll usage for tray title: {error}"),
+                Err(error) => ingest_usage(&app, vec![UsageInfo::error(account.id.clone(), error.to_string())]),
             }
         }
     });

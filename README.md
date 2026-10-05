@@ -29,6 +29,17 @@
 - **Blocked Switch Recovery** – Detect running Codex sessions and offer a force-close flow before retrying the account switch
 - **Dual Login Mode** – Authenticate with ChatGPT OAuth or import existing `auth.json` files
 
+## Windows 额度查看增强
+
+- 界面使用中文，支持导入 Codex 登录文件、ChatGPT OAuth 和 Cookie 额度账户。
+- Cookie 账户只查询额度；文件和 OAuth 账户支持 Codex 登录切换与预热。同一账号的两种凭证独立保存。
+- 额度启动时获取，之后每 5 分钟刷新；主界面、悬浮窗和托盘共用数据，刷新失败时保留上次成功值。
+- 悬浮窗支持置顶、拖动、恢复位置、自定义 50%–200% 缩放、已用/剩余百分比及显示账户选择。右键可以打开主界面或关闭悬浮窗。
+- 左键点击托盘打开主界面；主界面右上角关闭按钮只隐藏窗口，托盘右键选择“退出程序”才彻底退出。
+- 重复启动只打开已有主界面，不创建第二个进程或重复刷新。
+- Windows 托盘悬停提示显示剩余额度与 Credits 余额，不提供任务栏常驻文字插件。
+- 本地构建运行 `pnpm install` 和 `pnpm tauri:win:exe`，生成 `src-tauri/target/exe-only/release/codex-switcher.exe`，无需安装包或 updater 签名密钥。
+
 ## Installation
 
 ### Download a Release

@@ -27,7 +27,12 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "windows")]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        commands::restore_main_window(app);
+    }));
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -48,7 +53,14 @@ pub fn run() {
                     #[cfg(target_os = "windows")]
                     {
                         api.prevent_close();
-                        window.app_handle().exit(0);
+                        let app = window.app_handle();
+                        if auth::load_app_settings().map(|settings| settings.tray_display_mode == types::TrayDisplayMode::Hidden).unwrap_or(false) {
+                            if let Err(error) = app_menu::set_tray_display_mode(app, types::TrayDisplayMode::IconAndSession) {
+                                eprintln!("Failed to restore tray before hiding main window: {error}");
+                                return;
+                            }
+                        }
+                        commands::hide_main_window(app);
                     }
                     #[cfg(not(target_os = "windows"))]
                     {

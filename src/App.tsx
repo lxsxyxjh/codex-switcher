@@ -1358,7 +1358,7 @@ function App() {
               <button
                 onClick={() => runWindowAction("close")}
                 className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-red-500 hover:text-white dark:text-gray-400 dark:hover:bg-red-500 dark:hover:text-white"
-                title="退出程序"
+                title="关闭主界面，保留托盘"
               >
                 <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                   <path d="M6 6l12 12M18 6L6 18" strokeWidth="2" strokeLinecap="round" />

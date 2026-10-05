@@ -144,6 +144,8 @@ pub fn set_floating_usage_options(
     }
     save_app_settings(&settings).map_err(|error| error.to_string())?;
     let _ = app.emit("app-settings-changed", ());
+    #[cfg(desktop)]
+    crate::tray::refresh(&app);
     Ok(settings)
 }
 

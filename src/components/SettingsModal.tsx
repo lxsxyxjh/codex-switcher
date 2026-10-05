@@ -119,14 +119,14 @@ export function SettingsModal({
                   <label htmlFor="tray-display-mode" className="block text-sm font-medium text-gray-900 dark:text-gray-100">系统托盘</label>
                   <select
                     id="tray-display-mode"
-                    value={displaySettings.tray_display_mode}
+                    value={isWindowsPlatform() && displaySettings.tray_display_mode !== "icon_and_session" ? "icon_and_session" : displaySettings.tray_display_mode}
                     disabled={saving}
                     onChange={(event) => void changeDisplaySetting("set_tray_display_mode", event.target.value)}
                     className={selectClassName}
                   >
-                    <option value="icon_and_session">图标 + 额度时段</option>
-                    <option value="active_usage_text">每小时 + 每周额度</option>
-                    <option value="hidden">隐藏</option>
+                    <option value="icon_and_session">{isWindowsPlatform() ? "显示图标（悬停查看额度）" : "图标 + 额度时段"}</option>
+                    {!isWindowsPlatform() && <option value="active_usage_text">每小时 + 每周额度</option>}
+                    {!isWindowsPlatform() && <option value="hidden">隐藏</option>}
                   </select>
                   {displaySettings.dock_display_mode !== null && (
                     <>
@@ -163,6 +163,7 @@ export function SettingsModal({
             </div>
             <p className="text-xs text-gray-500">右键悬浮窗可以选择显示账户、打开主界面或关闭悬浮窗。</p>
           </section>}
+          <p className="text-xs text-gray-500">额度每 5 分钟自动刷新，也可以在主界面手动刷新。网络异常时保留上次成功数据。</p>
           <label htmlFor="codex-close-preference" className="block text-sm font-medium text-gray-900 dark:text-gray-100">
             Codex 关闭方式
           </label>
