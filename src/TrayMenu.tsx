@@ -12,7 +12,7 @@ import {
   readAutoWarmupAllEnabled,
   writeAutoWarmupAllEnabled,
 } from "./lib/autoWarmup";
-import { formatCreditsBalance, formatQuotaResetTime } from "./lib/usageDisplay";
+import { formatCreditsBalance, formatQuotaResetTime, mergeUsageUpdate } from "./lib/usageDisplay";
 
 const TRAY_REFRESH_EVENT = "tray-refresh";
 const ACCOUNTS_CHANGED_EVENT = "accounts-changed";
@@ -98,8 +98,8 @@ function mergeUsageForAccounts(
 ): Record<string, UsageInfo> {
   const next = retainUsageForAccounts(previous, accounts);
   for (const usage of updates) {
-    if (!usage.error || !next[usage.account_id]) {
-      next[usage.account_id] = usage;
+    if (accounts.some((account) => account.id === usage.account_id)) {
+      next[usage.account_id] = mergeUsageUpdate(next[usage.account_id], usage);
     }
   }
   return next;
@@ -210,7 +210,6 @@ function TrayMenu() {
         invokeBackend<UsageInfo[]>("refresh_all_accounts_usage"),
         loadActiveStats(list),
       ]);
-      await invokeBackend("report_usage", { usages });
       setUsageById((prev) => mergeUsageForAccounts(prev, list, usages));
     } catch (err) {
       setError(formatError(err));
@@ -405,7 +404,7 @@ function TrayMenu() {
             const usage = usageById[account.id];
             const stats = statsById[account.id];
             const windows =
-              usage && !usage.error
+              usage
                 ? ([
                     {
                       label: "5 小时",

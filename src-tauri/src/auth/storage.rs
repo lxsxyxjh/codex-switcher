@@ -1,7 +1,7 @@
 //! Account storage module - manages reading and writing accounts.json
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -121,7 +121,7 @@ pub fn save_app_settings(settings: &AppSettings) -> Result<()> {
     }
 
     let content = serde_json::to_string_pretty(settings).context("Failed to serialize settings")?;
-    fs::write(&path, content)
+    write_settings_atomically(&path, &content)
         .with_context(|| format!("Failed to write settings file: {}", path.display()))?;
 
     #[cfg(unix)]
@@ -132,6 +132,13 @@ pub fn save_app_settings(settings: &AppSettings) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn write_settings_atomically(path: &Path, content: &str) -> Result<()> {
+    let temporary = path.with_file_name(format!("settings-{}.tmp", uuid::Uuid::new_v4()));
+    let result = fs::write(&temporary, content).and_then(|()| fs::rename(&temporary, path));
+    if result.is_err() { let _ = fs::remove_file(&temporary); }
+    result.context("Failed to replace settings file")
 }
 
 /// Save the accounts store to disk
@@ -221,7 +228,12 @@ fn store_account(store: &mut AccountsStore, mut account: StoredAccount) -> Store
 /// Remove an account by ID
 pub fn remove_account(account_id: &str) -> Result<()> {
     let mut store = load_accounts()?;
+    remove_account_from_store(&mut store, account_id)?;
+    save_accounts(&store)?;
+    Ok(())
+}
 
+fn remove_account_from_store(store: &mut AccountsStore, account_id: &str) -> Result<()> {
     let initial_len = store.accounts.len();
     store.accounts.retain(|a| a.id != account_id);
 
@@ -229,16 +241,11 @@ pub fn remove_account(account_id: &str) -> Result<()> {
         anyhow::bail!("Account not found: {account_id}");
     }
 
-    // If we removed the active account, clear it or set to first available
+    // Removing credentials does not switch the running Codex login to another account.
     if store.active_account_id.as_deref() == Some(account_id) {
-        store.active_account_id = store
-            .accounts
-            .iter()
-            .find(|account| !matches!(&account.auth_data, AuthData::Cookie { .. }))
-            .map(|account| account.id.clone());
+        store.active_account_id = None;
     }
 
-    save_accounts(&store)?;
     Ok(())
 }
 
@@ -418,6 +425,40 @@ mod tests {
     use super::{store_account, sync_active_account_tokens};
     use crate::types::{AccountsStore, AuthData, AuthDotJson, StoredAccount, TokenData};
     use base64::Engine;
+
+    #[test]
+    fn settings_replace_an_existing_file_without_leaving_temporary_files() {
+        let directory = std::env::temp_dir().join(format!("codex-settings-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("settings.json");
+        super::write_settings_atomically(&path, "{\"scale\":100}").unwrap();
+        super::write_settings_atomically(&path, "{\"scale\":150}").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"scale\":150}");
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn deleting_the_active_account_does_not_claim_another_login_is_active() {
+        let active = StoredAccount::new_api_key("first".into(), "sample".into());
+        let other = StoredAccount::new_api_key("second".into(), "sample".into());
+        let mut store = AccountsStore { active_account_id: Some(active.id.clone()), accounts: vec![active.clone(), other.clone()], ..Default::default() };
+        super::remove_account_from_store(&mut store, &active.id).unwrap();
+        assert!(store.active_account_id.is_none());
+        assert_eq!(store.accounts[0].id, other.id);
+        assert!(super::remove_account_from_store(&mut store, "missing").is_err());
+        assert_eq!(store.accounts.len(), 1);
+    }
+
+    #[test]
+    fn deleting_an_inactive_account_preserves_the_current_login() {
+        let active = StoredAccount::new_api_key("first".into(), "sample".into());
+        let other = StoredAccount::new_api_key("second".into(), "sample".into());
+        let mut store = AccountsStore { active_account_id: Some(active.id.clone()), accounts: vec![active.clone(), other.clone()], ..Default::default() };
+        super::remove_account_from_store(&mut store, &other.id).unwrap();
+        assert_eq!(store.active_account_id.as_deref(), Some(active.id.as_str()));
+    }
 
     fn account(name: &str, account_id: &str, suffix: &str) -> StoredAccount {
         StoredAccount::new_chatgpt(

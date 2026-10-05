@@ -78,23 +78,21 @@ export function UsageBar({ usage, loading }: UsageBarProps) {
     );
   }
 
-  if (usage.error) {
-    return (
-      <div className="text-xs text-gray-400 dark:text-gray-500 italic py-1">
-        {usage.error
+  const hasPrimary = typeof usage.primary_used_percent === "number" && Number.isFinite(usage.primary_used_percent);
+  const hasSecondary = typeof usage.secondary_used_percent === "number" && Number.isFinite(usage.secondary_used_percent);
+  const hasCredits = usage.credits_balance != null && usage.credits_balance.trim() !== "";
+  const errorNotice = usage.error ? (
+      <div title={usage.error} className="text-xs text-amber-600 dark:text-amber-400 py-1">
+        {hasPrimary || hasSecondary || hasCredits ? "刷新失败，显示上次成功的额度。" : usage.error
           .replace(/^API error:\s*/i, "接口错误：")
           .replace(/Unauthorized/gi, "未授权")
           .replace(/Forbidden/gi, "禁止访问")
           .replace(/Not Found/gi, "未找到")}
       </div>
-    );
-  }
+    ) : null;
 
-  const hasPrimary = usage.primary_used_percent !== null && usage.primary_used_percent !== undefined;
-  const hasSecondary = usage.secondary_used_percent !== null && usage.secondary_used_percent !== undefined;
-
-  if (!hasPrimary && !hasSecondary) {
-    return (
+  if (!hasPrimary && !hasSecondary && !hasCredits) {
+    return errorNotice ?? (
       <div className="text-xs text-gray-400 dark:text-gray-500 italic py-1">
         暂无额度数据
       </div>
@@ -103,6 +101,7 @@ export function UsageBar({ usage, loading }: UsageBarProps) {
 
   return (
     <div className="space-y-2">
+      {errorNotice}
       {hasPrimary && (
         <RateLimitBar
           label="5 小时额度"
@@ -119,7 +118,7 @@ export function UsageBar({ usage, loading }: UsageBarProps) {
           resetsAt={usage.secondary_resets_at}
         />
       )}
-      {usage.credits_balance !== null && usage.credits_balance !== undefined && (
+      {hasCredits && (
         <div className="text-xs text-gray-500 dark:text-gray-400">
           余额：{formatCreditsBalance(usage.credits_balance)}
         </div>

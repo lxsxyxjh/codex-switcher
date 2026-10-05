@@ -353,11 +353,11 @@ export function AccountUsageStats({
   const [stats, setStats] = useState<AccountUsageStatsInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const requestSeq = useRef(0);
-  const backgroundInFlight = useRef(false);
+  const statsInFlight = useRef(false);
   const lastObservedUsage = useRef<UsageInfo | undefined>(usage);
 
   const loadStats = useCallback(async (background = false) => {
-    if (background && backgroundInFlight.current) return;
+    if (statsInFlight.current) return;
     const requestId = ++requestSeq.current;
 
     if (!enabled) {
@@ -369,9 +369,8 @@ export function AccountUsageStats({
       return;
     }
 
-    if (background) {
-      backgroundInFlight.current = true;
-    } else {
+    statsInFlight.current = true;
+    if (!background) {
       setLoading(true);
     }
     try {
@@ -388,9 +387,8 @@ export function AccountUsageStats({
       setStats(next);
       onStatsLoaded?.(next);
     } finally {
-      if (background) {
-        backgroundInFlight.current = false;
-      } else if (requestId === requestSeq.current) {
+      if (requestId === requestSeq.current) {
+        statsInFlight.current = false;
         setLoading(false);
       }
     }
@@ -398,10 +396,16 @@ export function AccountUsageStats({
 
   useEffect(() => {
     requestSeq.current += 1;
+    statsInFlight.current = false;
     setStats(null);
     onStatsLoaded?.(null);
     setLoading(false);
+    return () => { requestSeq.current += 1; statsInFlight.current = false; };
   }, [accountId, onStatsLoaded]);
+
+  useEffect(() => {
+    if (open && enabled) void loadStats();
+  }, [enabled, loadStats, open]);
 
   useEffect(() => {
     const usageChanged = usage !== lastObservedUsage.current;

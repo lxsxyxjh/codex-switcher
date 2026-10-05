@@ -6,6 +6,7 @@ import type {
   WarmupSummary,
   ImportAccountsSummary,
 } from "../types";
+import { mergeUsageUpdate } from "../lib/usageDisplay";
 import { invokeBackend, isTauriRuntime, type FileSource } from "../lib/platform";
 
 export function useAccounts() {
@@ -59,27 +60,23 @@ export function useAccounts() {
     []
   );
 
-  const loadAccounts = useCallback(async (preserveUsage = false) => {
+  const loadAccounts = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const accountList = await invokeBackend<AccountInfo[]>("list_accounts");
       
-      if (preserveUsage) {
-        // Preserve existing usage data when just updating account info
-        setAccounts((prev) => {
-          const usageMap = new Map(
-            prev.map((a) => [a.id, { usage: a.usage, usageLoading: a.usageLoading }])
-          );
-          return accountList.map((a) => ({
-            ...a,
-            usage: usageMap.get(a.id)?.usage,
-            usageLoading: usageMap.get(a.id)?.usageLoading,
-          }));
-        });
-      } else {
-        setAccounts(accountList.map((a) => ({ ...a, usageLoading: false })));
-      }
+      // Preserve existing usage data when just updating account info
+      setAccounts((prev) => {
+        const usageMap = new Map(
+          prev.map((a) => [a.id, { usage: a.usage, usageLoading: a.usageLoading }])
+        );
+        return accountList.map((a) => ({
+          ...a,
+          usage: usageMap.get(a.id)?.usage,
+          usageLoading: usageMap.get(a.id)?.usageLoading,
+        }));
+      });
       return accountList;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -189,7 +186,7 @@ export function useAccounts() {
             if (!usage) return account;
             return {
               ...account,
-              usage: usage.error && account.usage ? { ...account.usage, error: usage.error } : usage,
+              usage: mergeUsageUpdate(account.usage, usage),
               usageLoading: false,
             };
           })
@@ -226,7 +223,7 @@ export function useAccounts() {
       const usage = await invokeBackend<UsageInfo>("get_usage", { accountId });
       setAccounts((prev) =>
         prev.map((a) =>
-          a.id === accountId ? { ...a, usage: usage.error && a.usage ? { ...a.usage, error: usage.error } : usage, usageLoading: false } : a
+          a.id === accountId ? { ...a, usage: mergeUsageUpdate(a.usage, usage), usageLoading: false } : a
         )
       );
       await metadataPromise;
@@ -244,7 +241,7 @@ export function useAccounts() {
           a.id === accountId
             ? {
                 ...a,
-                usage: a.usage ? { ...a.usage, error: failedUsage.error } : failedUsage,
+                usage: mergeUsageUpdate(a.usage, failedUsage),
                 usageLoading: false,
               }
             : a
@@ -276,7 +273,7 @@ export function useAccounts() {
     async (accountId: string) => {
       try {
         await invokeBackend("switch_account", { accountId });
-        await loadAccounts(true); // Preserve usage data
+        await loadAccounts(); // Preserve usage data
       } catch (err) {
         throw err;
       }
@@ -290,7 +287,7 @@ export function useAccounts() {
         await invokeBackend("delete_account", { accountId });
         // Account activation can change while deletion is in flight. Re-read
         // backend metadata without discarding the latest cached usage.
-        await loadAccounts(true);
+        await loadAccounts();
       } catch (err) {
         throw err;
       }
@@ -302,7 +299,7 @@ export function useAccounts() {
     async (accountId: string, newName: string) => {
       try {
         await invokeBackend("rename_account", { accountId, newName });
-        await loadAccounts(true); // Preserve usage data
+        await loadAccounts(); // Preserve usage data
       } catch (err) {
         throw err;
       }
@@ -337,7 +334,7 @@ export function useAccounts() {
         "add_account_from_cookie",
         { cookie, name }
       );
-      await loadAccounts(true);
+      await loadAccounts();
       setAccounts((current) =>
         current.map((account) =>
           account.id === added.account.id
@@ -442,7 +439,7 @@ export function useAccounts() {
       if (!("__TAURI_INTERNALS__" in window)) return;
       const { listen } = await import("@tauri-apps/api/event");
       unlisten = await listen("accounts-changed", () => {
-        void loadAccounts(true);
+        void loadAccounts();
       });
       unlistenUsage = await listen<UsageInfo[]>("usage-updated", ({ payload }) => {
         const updates = new Map(payload.map((usage) => [usage.account_id, usage]));
@@ -451,9 +448,7 @@ export function useAccounts() {
           if (!usage) return account;
           return {
             ...account,
-            usage: usage.error && account.usage
-              ? { ...account.usage, error: usage.error }
-              : usage,
+            usage: mergeUsageUpdate(account.usage, usage),
             usageLoading: false,
           };
         }));

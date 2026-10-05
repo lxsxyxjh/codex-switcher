@@ -214,6 +214,7 @@ export function AccountCard({
       setResetCredits(null);
       return;
     }
+    if (statsOpen) return;
 
     try {
       const stats = await invokeBackend<AccountUsageStatsInfo>("get_account_usage_stats", {
@@ -225,7 +226,7 @@ export function AccountCard({
       if (requestId !== resetRequestSeq.current) return;
       setResetCredits(null);
     }
-  }, [account.auth_mode, account.id]);
+  }, [account.auth_mode, account.id, statsOpen]);
 
   const handleStatsLoaded = useCallback(
     (stats: AccountUsageStatsInfo | null) => {
@@ -235,8 +236,6 @@ export function AccountCard({
   );
 
   useEffect(() => {
-    setResetCredits(null);
-
     void loadResetCredits();
     const timer = window.setInterval(() => {
       void loadResetCredits();

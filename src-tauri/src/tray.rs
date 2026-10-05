@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     LazyLock, Mutex,
@@ -238,12 +238,16 @@ fn watch_system_theme<R: Runtime>(app: AppHandle<R>) {
 }
 
 /// Store usage updates and notify the open windows and native tray menu.
-pub fn ingest_usage<R: Runtime>(app: &AppHandle<R>, usages: Vec<UsageInfo>) {
+pub fn ingest_usage<R: Runtime>(app: &AppHandle<R>, mut usages: Vec<UsageInfo>) {
+    let account_ids = load_accounts().ok().map(|store| store.accounts.into_iter().map(|account| account.id).collect::<HashSet<_>>());
     if let Ok(mut cache) = TRAY_USAGE.lock() {
-        for usage in &usages {
-            if usage.error.is_none() || !cache.contains_key(&usage.account_id) {
-                cache.insert(usage.account_id.clone(), usage.clone());
-            }
+        if let Some(account_ids) = account_ids {
+            cache.retain(|id, _| account_ids.contains(id));
+            usages.retain(|usage| account_ids.contains(&usage.account_id));
+        }
+        for usage in &mut usages {
+            *usage = usage.clone().retain_previous_on_error(cache.get(&usage.account_id));
+            cache.insert(usage.account_id.clone(), usage.clone());
         }
     }
     let _ = app.emit(USAGE_UPDATED_EVENT, &usages);
@@ -336,18 +340,27 @@ fn floating_position_is_visible<R: Runtime>(
     app: &AppHandle<R>,
     position: PhysicalPosition<i32>,
 ) -> bool {
+    let size = app.get_webview_window(FLOATING_USAGE_WINDOW).and_then(|window| window.outer_size().ok());
     app.available_monitors().unwrap_or_default().iter().any(|monitor| {
         let monitor_position = monitor.position();
         let monitor_size = monitor.size();
         let scale = monitor.scale_factor();
-        let size = app.get_webview_window(FLOATING_USAGE_WINDOW).and_then(|window| window.outer_size().ok());
         let width = size.map(|size| size.width as i32).unwrap_or((FLOATING_USAGE_WIDTH * scale).ceil() as i32);
         let height = size.map(|size| size.height as i32).unwrap_or((FLOATING_USAGE_HEIGHT * scale).ceil() as i32);
-        position.x >= monitor_position.x
-            && position.y >= monitor_position.y
-            && position.x.saturating_add(width) <= monitor_position.x + monitor_size.width as i32
-            && position.y.saturating_add(height) <= monitor_position.y + monitor_size.height as i32
+        floating_bounds_are_visible(
+            (position.x, position.y, width, height),
+            (monitor_position.x, monitor_position.y, monitor_size.width as i32, monitor_size.height as i32),
+        )
     })
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn floating_bounds_are_visible(window: (i32, i32, i32, i32), monitor: (i32, i32, i32, i32)) -> bool {
+    let (x, y, width, height) = window;
+    let (left, top, monitor_width, monitor_height) = monitor;
+    let overlap_width = (i64::from(x) + i64::from(width)).min(i64::from(left) + i64::from(monitor_width)) - i64::from(x.max(left));
+    let overlap_height = (i64::from(y) + i64::from(height)).min(i64::from(top) + i64::from(monitor_height)) - i64::from(y.max(top));
+    overlap_width >= i64::from(width.min(16)) && overlap_height >= i64::from(height.min(16))
 }
 
 #[cfg(target_os = "windows")]
@@ -384,10 +397,7 @@ pub fn keep_floating_usage_visible<R: Runtime>(app: &AppHandle<R>) -> tauri::Res
     }
     Ok(())
 }
-
-// ============================================================================
 // React popup window (used on macOS/Windows via tray click events)
-// ============================================================================
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn create_tray_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
@@ -474,10 +484,7 @@ fn position_near_cursor<R: Runtime>(
 
     let _ = window.set_position(PhysicalPosition::new(x, y));
 }
-
-// ============================================================================
 // Native menu (the only tray interaction on Linux; right-click on macOS/Windows)
-// ============================================================================
 
 fn build_menu<R: Runtime>(app: &AppHandle<R>, store: &AccountsStore) -> tauri::Result<Menu<R>> {
     let menu = Menu::new(app)?;
@@ -713,7 +720,8 @@ fn usage_tooltip(usage: Option<&UsageInfo>) -> String {
             .map(|number| if number.fract() == 0.0 { format!("{number:.0}") } else { format!("{number:.2}") })
             .unwrap_or_else(|| value.to_string())
     }).unwrap_or_else(|| "--".into());
-    format!("Codex Switcher\n剩余 {windows} · 余额 {credits}\n每 5 分钟自动刷新")
+    let status = if usage.error.is_some() { "刷新失败，保留上次数据" } else { "每 5 分钟自动刷新" };
+    format!("Codex Switcher\n剩余 {windows} · 余额 {credits}\n{status}")
 }
 
 fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
@@ -727,7 +735,7 @@ fn active_session_title(active_account_id: Option<&str>) -> Option<String> {
     let usage = cache.get(active_account_id)?;
     session_remaining_title(
         usage.primary_used_percent.or(usage.secondary_used_percent),
-        usage.error.is_some(),
+        false,
     )
 }
 
@@ -750,7 +758,7 @@ fn active_usage_title(active_account_id: Option<&str>) -> String {
         .and_then(|cache| cache.get(active_account_id).cloned());
 
     match usage {
-        Some(usage) if usage.error.is_none() => {
+        Some(usage) => {
             usage_title(
                 usage.primary_used_percent,
                 usage.primary_window_minutes,
@@ -824,10 +832,6 @@ fn usage_suffix(account_id: &str) -> String {
     let Some(usage) = cache.get(account_id) else {
         return String::new();
     };
-    if usage.error.is_some() {
-        return String::new();
-    }
-
     let mut parts = Vec::new();
     if let Some(remaining) = session_remaining_title(usage.primary_used_percent, false) {
         let label = window_duration_label(usage.primary_window_minutes)
@@ -856,10 +860,7 @@ fn account_menu_id(account_id: &str) -> String {
 fn menu_label(label: &str) -> String {
     label.replace('&', "&&")
 }
-
-// ============================================================================
 // Shared: react to external account changes
-// ============================================================================
 
 fn watch_accounts_file<R: Runtime>(app: AppHandle<R>) {
     std::thread::spawn(move || {
@@ -876,6 +877,13 @@ fn watch_accounts_file<R: Runtime>(app: AppHandle<R>) {
             std::thread::sleep(Duration::from_secs(1));
             let modified = modified_at(&accounts_path);
             if modified != last_modified {
+                if let Ok(store) = load_accounts() {
+                    let ids: HashSet<String> = store.accounts.iter().map(|account| account.id.clone()).collect();
+                    if let Ok(mut cache) = TRAY_USAGE.lock() { cache.retain(|id, _| ids.contains(id)); }
+                    crate::commands::usage::retain_account_metadata(&ids);
+                } else {
+                    continue;
+                }
                 last_modified = modified;
                 refresh_menu(&app); // keep the native menu current
                 let _ = app.emit(ACCOUNTS_CHANGED_EVENT, ()); // refresh the React UIs
@@ -972,6 +980,17 @@ fn poll_account_metadata<R: Runtime>(app: AppHandle<R>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visible_partial_and_spanning_windows_keep_their_position() {
+        let monitor = (0, 0, 1920, 1080);
+        assert!(floating_bounds_are_visible((1800, 200, 300, 48), monitor));
+        assert!(floating_bounds_are_visible((-200, 200, 300, 48), monitor));
+        assert!(floating_bounds_are_visible((1904, 200, 16, 44), monitor));
+        assert!(!floating_bounds_are_visible((1920, 200, 300, 48), monitor));
+        assert!(!floating_bounds_are_visible((1915, 200, 300, 48), monitor));
+        assert!(floating_bounds_are_visible((-1900, 200, 300, 48), (-1920, 0, 1920, 1080)));
+    }
 
     #[test]
     fn themed_tray_icon_preserves_shape_and_switches_to_white() {

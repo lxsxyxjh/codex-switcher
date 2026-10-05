@@ -19,8 +19,8 @@ use commands::{
     import_accounts_full_encrypted_file, import_accounts_slim_text, kill_codex_processes,
     get_cached_usage, get_floating_usage_enabled, list_accounts, open_main_window, quit_app,
     refresh_account_metadata,
-    refresh_all_accounts_usage, rename_account, report_usage, set_dock_display_mode,
-    save_floating_usage_position, set_floating_usage_enabled, start_login,
+    refresh_all_accounts_usage, rename_account, set_dock_display_mode,
+    set_floating_usage_enabled, start_login,
     switch_account, warmup_account, warmup_all_accounts,
 };
 use tauri::Manager;
@@ -120,7 +120,6 @@ pub fn run() {
             hide_tray_window,
             open_main_window,
             quit_app,
-            report_usage,
             get_cached_usage,
             commands::get_codex_auth_path,
             commands::get_floating_usage_options,
@@ -129,7 +128,6 @@ pub fn run() {
             commands::wait_for_floating_drag_release,
             get_floating_usage_enabled,
             set_floating_usage_enabled,
-            save_floating_usage_position,
             get_dock_display_mode,
             set_dock_display_mode,
             complete_close_behavior,

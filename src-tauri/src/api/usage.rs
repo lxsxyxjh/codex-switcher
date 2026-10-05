@@ -221,6 +221,7 @@ pub async fn fetch_chatgpt_cookie_session(cookie: &str) -> Result<ChatGptCookieS
     let cookie = normalize_chatgpt_cookie(cookie)?;
     let response = reqwest::Client::new()
         .get(CHATGPT_WEB_SESSION_API)
+        .timeout(std::time::Duration::from_secs(30))
         .header(COOKIE, HeaderValue::from_str(&cookie)?)
         .header(USER_AGENT, BROWSER_USER_AGENT)
         .header("accept", "application/json")
@@ -557,6 +558,7 @@ async fn send_chatgpt_get_request(
 
     client
         .get(url)
+        .timeout(std::time::Duration::from_secs(30))
         .headers(headers)
         .send()
         .await

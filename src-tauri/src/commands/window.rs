@@ -27,15 +27,6 @@ pub struct CloseBehaviorRequestedPayload {
     pub request_id: u64,
 }
 
-/// Forward UI-reported usage failures so other windows can preserve their last successful values.
-#[tauri::command]
-pub fn report_usage(app: AppHandle, usages: Vec<UsageInfo>) {
-    #[cfg(desktop)]
-    crate::tray::ingest_usage(&app, usages);
-    #[cfg(not(desktop))]
-    let _ = (app, usages);
-}
-
 #[tauri::command]
 pub fn get_cached_usage() -> Vec<UsageInfo> {
     #[cfg(desktop)]
@@ -275,13 +266,6 @@ mod floating_edge_tests {
         assert_eq!(floating_edge_from_gaps([500, -100, -20, 500], 6), Some("right"));
         assert_eq!(floating_edge_from_gaps([-20, 500, 500, -100], 6), Some("bottom"));
     }
-}
-
-#[tauri::command]
-pub fn save_floating_usage_position(x: i32, y: i32) -> Result<(), String> {
-    let mut settings = load_app_settings().map_err(|error| error.to_string())?;
-    settings.floating_usage_position = Some(FloatingUsagePosition { x, y });
-    save_app_settings(&settings).map_err(|error| error.to_string())
 }
 
 /// Hide the tray popup window (called by the tray UI after an action).

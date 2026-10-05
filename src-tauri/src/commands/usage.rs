@@ -17,6 +17,12 @@ use std::{
 static ACCOUNT_METADATA_CACHE: LazyLock<Mutex<HashMap<String, ChatGptAccountMetadata>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+pub(crate) fn retain_account_metadata(account_ids: &std::collections::HashSet<String>) {
+    if let Ok(mut cache) = ACCOUNT_METADATA_CACHE.lock() {
+        cache.retain(|id, _| account_ids.contains(id));
+    }
+}
+
 pub(crate) fn apply_cached_account_metadata(account: &mut AccountInfo) {
     let Ok(cache) = ACCOUNT_METADATA_CACHE.lock() else {
         return;
@@ -108,7 +114,16 @@ pub async fn refresh_account_metadata(account_id: String) -> Result<AccountInfo,
 
 /// Refresh usage info for all accounts
 #[tauri::command]
-pub async fn refresh_all_accounts_usage() -> Result<Vec<UsageInfo>, String> {
+pub async fn refresh_all_accounts_usage(app: tauri::AppHandle) -> Result<Vec<UsageInfo>, String> {
+    let usages = fetch_all_accounts_usage().await?;
+    #[cfg(desktop)]
+    crate::tray::ingest_usage(&app, usages.clone());
+    #[cfg(not(desktop))]
+    let _ = app;
+    Ok(usages)
+}
+
+pub async fn fetch_all_accounts_usage() -> Result<Vec<UsageInfo>, String> {
     let store = load_accounts().map_err(|e| e.to_string())?;
     Ok(refresh_all_usage(&store.accounts).await)
 }

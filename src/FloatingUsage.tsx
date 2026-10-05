@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AccountInfo, UsageInfo } from "./types";
 import { invokeBackend, isTauriRuntime } from "./lib/platform";
 import { getTauriWindow, isCursorInsideWindow } from "./lib/tauriWindow";
-import { formatCreditsBalance, formatUsagePercent, getDisplayedUsageWindows } from "./lib/usageDisplay";
+import { formatCreditsBalance, formatUsagePercent, getDisplayedUsageWindows, mergeUsageUpdate } from "./lib/usageDisplay";
 import {
   applyTheme,
   syncThemeFromStorage,
@@ -58,11 +58,13 @@ function FloatingUsage() {
   }, []);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [usageById, setUsageById] = useState<Record<string, UsageInfo>>({});
-  const [staleById, setStaleById] = useState<Record<string, boolean>>({});
 
   const loadAccounts = useCallback(async () => {
     try {
-      setAccounts(await invokeBackend<AccountInfo[]>("list_accounts"));
+      const list = await invokeBackend<AccountInfo[]>("list_accounts");
+      setAccounts(list);
+      const ids = new Set(list.map((account) => account.id));
+      setUsageById((previous) => Object.fromEntries(Object.entries(previous).filter(([id]) => ids.has(id))));
     } catch (error) {
       console.error("Failed to load accounts for floating usage:", error);
     }
@@ -72,13 +74,8 @@ function FloatingUsage() {
     setUsageById((previous) => {
       const next = { ...previous };
       for (const usage of usages) {
-        if (!usage.error) next[usage.account_id] = usage;
+        next[usage.account_id] = mergeUsageUpdate(previous[usage.account_id], usage);
       }
-      return next;
-    });
-    setStaleById((previous) => {
-      const next = { ...previous };
-      for (const usage of usages) next[usage.account_id] = Boolean(usage.error);
       return next;
     });
   }, []);
@@ -155,7 +152,7 @@ function FloatingUsage() {
     accounts.find((account) => account.auth_mode === "cookie");
   const usage = displayAccount ? usageById[displayAccount.id] : undefined;
   const usageWindows = getDisplayedUsageWindows(usage);
-  const isStale = displayAccount ? Boolean(staleById[displayAccount.id]) : false;
+  const isStale = Boolean(usage?.error);
   const currentWindow = getTauriWindow();
 
   const sideEdge = edge === "left" || edge === "right";
@@ -212,7 +209,6 @@ function FloatingUsage() {
     try {
       await invokeBackend<UsageInfo>("get_usage", { accountId: displayAccount.id });
     } catch (error) {
-      setStaleById((previous) => ({ ...previous, [displayAccount.id]: true }));
       console.error("Failed to refresh floating usage:", error);
     } finally {
       refreshInFlight.current = false;
@@ -227,7 +223,7 @@ function FloatingUsage() {
     const menu = await Menu.new({ items: [
       { text: "打开主界面", action: () => { void invokeBackend("open_main_window"); } },
       { text: "显示账户", items: [
-        { text: "跟随当前账户", checked: !options.floating_usage_account_id, action: () => saveOptions({ accountId: "" }) },
+        { text: "跟随当前账户", checked: !accounts.some((account) => account.id === options.floating_usage_account_id), action: () => saveOptions({ accountId: "" }) },
         ...accounts.map((account) => ({ text: `${account.name} (${account.auth_mode === "cookie" ? "Cookie" : "Codex 登录"})`, checked: options.floating_usage_account_id === account.id, action: () => saveOptions({ accountId: account.id }) })),
       ] },
       { text: "百分比显示", items: [

@@ -223,6 +223,7 @@ async fn send_profile_usage_request(account: &StoredAccount) -> anyhow::Result<r
 
     Ok(client
         .get(CHATGPT_PROFILE_USAGE_URL)
+        .timeout(std::time::Duration::from_secs(30))
         .headers(build_chatgpt_headers(access_token, chatgpt_account_id)?)
         .send()
         .await?)
@@ -262,6 +263,7 @@ async fn fetch_reset_credits(account: &StoredAccount) -> anyhow::Result<AccountR
     let client = reqwest::Client::new();
     let response = client
         .get(CHATGPT_RESET_CREDITS_URL)
+        .timeout(std::time::Duration::from_secs(30))
         .headers(build_reset_credits_headers(
             access_token,
             chatgpt_account_id,

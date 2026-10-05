@@ -670,6 +670,17 @@ pub struct UsageInfo {
 }
 
 impl UsageInfo {
+    pub fn retain_previous_on_error(self, previous: Option<&Self>) -> Self {
+        if self.error.is_some() {
+            if let Some(previous) = previous.filter(|previous| previous.account_id == self.account_id) {
+                let mut retained = previous.clone();
+                retained.error = self.error;
+                return retained;
+            }
+        }
+        self
+    }
+
     pub fn error(account_id: String, error: String) -> Self {
         Self {
             account_id,
@@ -762,6 +773,22 @@ mod tests {
     };
     use base64::Engine;
     use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn usage_failure_preserves_values_and_success_clears_stale_status() {
+        let mut previous = super::UsageInfo::error("first".into(), "old".into());
+        previous.error = None;
+        previous.primary_used_percent = Some(100.0);
+        previous.credits_balance = Some("0".into());
+        let failed = super::UsageInfo::error("first".into(), "offline".into()).retain_previous_on_error(Some(&previous));
+        assert_eq!(failed.primary_used_percent, Some(100.0));
+        assert_eq!(failed.credits_balance.as_deref(), Some("0"));
+        assert_eq!(failed.error.as_deref(), Some("offline"));
+        let healthy = previous.clone().retain_previous_on_error(Some(&failed));
+        assert!(healthy.error.is_none());
+        let different = super::UsageInfo::error("second".into(), "offline".into()).retain_previous_on_error(Some(&previous));
+        assert!(different.credits_balance.is_none());
+    }
 
     #[test]
     fn existing_account_store_loads_after_removing_visibility_settings() {

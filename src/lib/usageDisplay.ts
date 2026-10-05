@@ -1,5 +1,11 @@
 import type { UsageInfo } from "../types";
 
+export function mergeUsageUpdate(previous: UsageInfo | undefined, update: UsageInfo): UsageInfo {
+  return update.error && previous?.account_id === update.account_id
+    ? { ...previous, error: update.error }
+    : update;
+}
+
 export function getDisplayedUsageWindows(usage: Pick<UsageInfo, "primary_used_percent" | "primary_window_minutes" | "secondary_used_percent" | "secondary_window_minutes"> | undefined) {
   if (!usage) return [];
   return [
