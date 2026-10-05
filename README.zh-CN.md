@@ -88,6 +88,13 @@ src-tauri/target/exe-only/release/codex-switcher.exe
 
 也可以使用 GitHub Actions 自动打包：推送与 `package.json` 版本一致的标签（例如 `v0.2.21`），或在 **Windows EXE Release** 中输入已有标签运行。只编译 Windows，并把 exe 上传到 Release 草稿；检查草稿后点击 **Publish release**。已有 exe 附件不会被覆盖，不需要配置签名密钥。
 
+## 0.2.21 版本
+
+- 简化为额度查看工具，移除登录切换、预热、使用统计和重置次数。
+- 主界面、悬浮窗和托盘统一显示所选账户。
+- 只自动刷新已开启悬浮窗显示的账户，其他账户手动刷新；请求串行执行，失败保留上次成功数据。
+- 顶部窗口按钮和操作栏固定，账户列表单独滚动。
+
 ## 原项目和本版本范围
 
 基于 [Lampese](https://github.com/Lampese) 及其贡献者开发的 [Codex Switcher](https://github.com/Lampese/codex-switcher)。账户存储、登录、额度请求和 Tauri 基础来自原项目。本分支专注额度查看，增加 Windows 桌面额度悬浮窗、Cookie 输入和 Credits 同步显示，并移除登录切换、预热及进程控制。

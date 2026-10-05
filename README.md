@@ -31,7 +31,7 @@ Only quota periods returned for the account are shown. Missing periods are omitt
 ## Download and start
 
 1. Download `codex-switcher.exe` from [Releases](https://github.com/lxsxyxjh/codex-switcher/releases), place it in a permanent folder, and open it.
-2. Select **添加账户** (Account → Add account).
+2. Select **添加账户** (Add account).
 3. Enable **悬浮额度窗** (Floating quota widget) in Settings or the tray context menu.
 4. Drag the widget to your preferred location. Right-click it for account, layout, scaling, and refresh settings.
 
@@ -87,6 +87,13 @@ src-tauri/target/exe-only/release/codex-switcher.exe
 No installer or updater signing key is required. To publish, optionally bump the version with `pnpm version:patch` before building, check the exe, and upload it to your own GitHub Release. The inherited updater still targets the original repository; use manual exe downloads unless you configure your own update service. Development: `pnpm tauri:win dev`.
 
 GitHub Actions can also build the exe: push a version tag matching `package.json` (for example `v0.2.21`), or run **Windows EXE Release** with an existing tag. It builds Windows only and uploads the exe to a Release draft. Review the draft and click **Publish release**. Existing exe attachments are preserved. No signing secrets are needed.
+
+## Version 0.2.21
+
+- Simplified quota-only interface; removed login switching, warm-up, usage statistics and reset-count controls.
+- One selected account across the main window, floating widget and tray.
+- Automatic refresh only for the account displayed in the enabled widget; other accounts refresh manually. Requests are serialized and failures preserve cached values.
+- Fixed window controls and toolbar stay visible while the account list scrolls.
 
 ## Original project and scope
 
