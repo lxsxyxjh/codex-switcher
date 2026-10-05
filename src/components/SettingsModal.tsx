@@ -89,7 +89,7 @@ export function SettingsModal({
     }
   };
 
-  const changeFloating = async (values: { scale?: number; showUsed?: boolean; enabled?: boolean }) => {
+  const changeFloating = async (values: { scale?: number; showUsed?: boolean; enabled?: boolean; vertical?: boolean; edgeHide?: boolean }) => {
     setSaving(true);
     setError(null);
     try {
@@ -152,6 +152,11 @@ export function SettingsModal({
           )}
           {floating && <section className="grid gap-3">
             <label className="text-sm font-medium"><input type="checkbox" checked={floating.floating_usage_enabled} disabled={saving} onChange={(event) => void changeFloating({ enabled: event.target.checked })} /> 桌面悬浮额度窗</label>
+            <label htmlFor="floating-layout" className="text-sm">悬浮窗排列方式</label>
+            <select id="floating-layout" className={selectClassName} disabled={saving} value={String(floating.floating_usage_vertical)} onChange={(event) => void changeFloating({ vertical: event.target.value === "true" })}>
+              <option value="false">横排</option><option value="true">竖排（标题与数值分行）</option>
+            </select>
+            <label className="text-sm"><input type="checkbox" checked={floating.floating_usage_edge_hide} disabled={saving} onChange={(event) => void changeFloating({ edgeHide: event.target.checked })} /> 贴边隐藏（拖到屏幕边缘，鼠标移入展开）</label>
             <label htmlFor="floating-percent-mode" className="text-sm">百分比显示</label>
             <select id="floating-percent-mode" className={selectClassName} disabled={saving} value={String(floating.floating_usage_show_used)} onChange={(event) => void changeFloating({ showUsed: event.target.value === "true" })}>
               <option value="false">剩余百分比</option><option value="true">已用百分比</option>

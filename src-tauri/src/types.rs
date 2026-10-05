@@ -61,6 +61,9 @@ pub struct AppSettings {
     pub floating_usage_account_id: Option<String>,
     #[serde(default)]
     pub floating_usage_show_used: bool,
+    pub floating_usage_vertical: bool,
+    pub floating_usage_edge_hide: bool,
+    pub floating_usage_edge: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -74,6 +77,9 @@ impl Default for AppSettings {
             floating_usage_scale: 100,
             floating_usage_account_id: None,
             floating_usage_show_used: false,
+            floating_usage_vertical: false,
+            floating_usage_edge_hide: false,
+            floating_usage_edge: None,
         }
     }
 }

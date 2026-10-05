@@ -20,6 +20,7 @@ This fork focuses on **Windows x64**. Its Windows interface is currently in Chin
 
 - **Floating quota bar:** see 5-hour quota, weekly quota, and Credits without opening the main window.
 - **Simple controls:** drag the bar anywhere; right-click to choose an account, change its size, switch between used and remaining percentages, open the main window, or hide the bar.
+- **Layout and edge hiding:** choose a horizontal bar or vertical label/value rows. Enable edge hiding, drag to a screen edge, and hover over the small tab to expand it. Drag away from the edge to undock.
 - **Remembered settings:** the bar restores its position, visibility, size, and display preferences after restarting.
 - **Cookie accounts:** add a browser Cookie to check quota alongside accounts added through a Codex login file or ChatGPT login.
 - **Shared refresh:** quota refreshes on startup and every **5 minutes**. Manual refresh updates the displays immediately. A failed refresh keeps the previous successful values.

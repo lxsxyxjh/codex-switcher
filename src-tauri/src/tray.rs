@@ -283,13 +283,15 @@ fn create_floating_usage_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result
         return Ok(());
     }
 
+    let settings = load_app_settings().unwrap_or_default();
+    let restoring_edge = settings.floating_usage_edge_hide && settings.floating_usage_edge.is_some();
     let window = WebviewWindowBuilder::new(
         app,
         FLOATING_USAGE_WINDOW,
         WebviewUrl::App("floating.html".into()),
     )
     .title("Codex Usage")
-    .inner_size(FLOATING_USAGE_WIDTH, FLOATING_USAGE_HEIGHT)
+    .inner_size(if restoring_edge { 20.0 } else { FLOATING_USAGE_WIDTH }, if restoring_edge { 20.0 } else { FLOATING_USAGE_HEIGHT })
     .resizable(false)
     .decorations(false)
     .shadow(false)
@@ -301,7 +303,6 @@ fn create_floating_usage_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result
     .visible(false)
     .build()?;
 
-    let settings = load_app_settings().unwrap_or_default();
     let saved_position = settings
         .floating_usage_position
         .map(|position| PhysicalPosition::new(position.x, position.y));
