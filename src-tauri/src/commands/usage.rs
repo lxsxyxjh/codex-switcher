@@ -1,14 +1,13 @@
 //! Usage query Tauri commands
 
 use crate::api::usage::{
-    fetch_chatgpt_account_metadata, get_account_usage, refresh_all_usage,
-    warmup_account as send_warmup, ChatGptAccountMetadata,
+    fetch_chatgpt_account_metadata, get_account_usage,
+    ChatGptAccountMetadata,
 };
 use crate::auth::{
     ensure_chatgpt_tokens_fresh, get_account, load_accounts, update_account_metadata,
 };
-use crate::types::{AccountInfo, AuthData, UsageInfo, WarmupSummary};
-use futures::{stream, StreamExt};
+use crate::types::{AccountInfo, AuthData, UsageInfo};
 use std::{
     collections::HashMap,
     sync::{LazyLock, Mutex},
@@ -48,7 +47,10 @@ pub async fn fetch_usage(account_id: &str) -> Result<UsageInfo, String> {
 
 /// Get usage info for a specific account
 #[tauri::command]
-pub async fn get_usage(app: tauri::AppHandle, account_id: String) -> Result<UsageInfo, String> {
+pub async fn get_usage(app: tauri::AppHandle, account_id: String, source: Option<String>) -> Result<UsageInfo, String> {
+    #[cfg(desktop)]
+    let _refresh_guard = crate::tray::USAGE_REFRESH_LOCK.lock().await;
+    crate::api::usage::write_usage_log(&format!("刷新触发 account={account_id} source={}", source.as_deref().unwrap_or("账户按钮")));
     let result = fetch_usage(&account_id).await;
 
     // Keep the tray menu/title in sync with whichever UI fetched fresh usage.
@@ -68,6 +70,9 @@ pub async fn get_usage(app: tauri::AppHandle, account_id: String) -> Result<Usag
 /// For API key accounts this is a no-op.
 #[tauri::command]
 pub async fn refresh_account_metadata(account_id: String) -> Result<AccountInfo, String> {
+    #[cfg(desktop)]
+    let _refresh_guard = crate::tray::USAGE_REFRESH_LOCK.lock().await;
+    crate::api::usage::write_usage_log(&format!("订阅信息刷新开始 account={account_id}"));
     let account = get_account(&account_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Account not found: {account_id}"))?;
@@ -112,63 +117,10 @@ pub async fn refresh_account_metadata(account_id: String) -> Result<AccountInfo,
     Ok(info)
 }
 
-/// Refresh usage info for all accounts
 #[tauri::command]
-pub async fn refresh_all_accounts_usage(app: tauri::AppHandle) -> Result<Vec<UsageInfo>, String> {
-    let usages = fetch_all_accounts_usage().await?;
-    #[cfg(desktop)]
-    crate::tray::ingest_usage(&app, usages.clone());
-    #[cfg(not(desktop))]
-    let _ = app;
-    Ok(usages)
-}
-
-pub async fn fetch_all_accounts_usage() -> Result<Vec<UsageInfo>, String> {
-    let store = load_accounts().map_err(|e| e.to_string())?;
-    Ok(refresh_all_usage(&store.accounts).await)
-}
-
-/// Send a minimal warm-up request for one account
-#[tauri::command]
-pub async fn warmup_account(account_id: String) -> Result<(), String> {
-    let account = get_account(&account_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Account not found: {account_id}"))?;
-
-    send_warmup(&account).await.map_err(|e| e.to_string())
-}
-
-/// Send minimal warm-up requests for all accounts
-#[tauri::command]
-pub async fn warmup_all_accounts() -> Result<WarmupSummary, String> {
-    let store = load_accounts().map_err(|e| e.to_string())?;
-    let accounts: Vec<_> = store
-        .accounts
-        .into_iter()
-        .filter(|account| !matches!(&account.auth_data, AuthData::Cookie { .. }))
-        .collect();
-    let total_accounts = accounts.len();
-    let concurrency = total_accounts.min(10).max(1);
-
-    let results: Vec<(String, bool)> = stream::iter(accounts)
-        .map(|account| async move {
-            let account_id = account.id.clone();
-            let failed = send_warmup(&account).await.is_err();
-            (account_id, failed)
-        })
-        .buffer_unordered(concurrency)
-        .collect()
-        .await;
-
-    let failed_account_ids = results
-        .into_iter()
-        .filter_map(|(account_id, failed)| failed.then_some(account_id))
-        .collect::<Vec<_>>();
-
-    let warmed_accounts = total_accounts.saturating_sub(failed_account_ids.len());
-    Ok(WarmupSummary {
-        total_accounts,
-        warmed_accounts,
-        failed_account_ids,
-    })
+pub fn open_usage_log(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    crate::api::usage::write_usage_log("打开额度刷新日志");
+    let path = crate::auth::get_config_dir().map_err(|error| error.to_string())?.join("usage.log");
+    app.opener().open_path(path.to_string_lossy(), None::<&str>).map_err(|error| error.to_string())
 }

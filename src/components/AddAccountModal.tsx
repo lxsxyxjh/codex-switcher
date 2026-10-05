@@ -262,7 +262,7 @@ export function AddAccountModal({
                 className="w-full px-3 py-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-gray-400 dark:focus:border-gray-500 focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500"
               />
               <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
-                使用浏览器会话查看额度，添加后自动识别邮箱。Codex 登录切换和预热请使用文件或 ChatGPT 登录账户。
+                使用浏览器会话查看额度，添加后自动识别邮箱。
               </p>
             </div>
           )}

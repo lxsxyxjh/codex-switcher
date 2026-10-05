@@ -5,25 +5,21 @@ use crate::api::usage::{
     get_account_usage, normalize_chatgpt_cookie,
 };
 use crate::auth::{
-    add_account, create_chatgpt_account_from_refresh_token, ensure_chatgpt_tokens_fresh_locked,
-    get_active_account, import_from_auth_json, import_from_auth_json_contents, load_accounts,
-    read_current_auth, remove_account, save_accounts, set_active_account, switch_to_account,
-    sync_active_account_tokens, touch_account, AUTH_OPERATION_LOCK,
+    add_account,
+    import_from_auth_json, import_from_auth_json_contents, load_accounts,
+    remove_account, save_accounts,
 };
 use crate::types::{
     AccountInfo, AccountsStore, AuthData, ImportAccountsSummary, StoredAccount, UsageInfo,
 };
 
-use super::process::ensure_codex_not_running;
 
 use anyhow::Context;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
     XChaCha20Poly1305, XNonce,
 };
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
-use futures::{stream, StreamExt};
 use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
 use sha2::Sha256;
@@ -31,17 +27,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
 
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-const SLIM_EXPORT_PREFIX: &str = "css1.";
-const SLIM_FORMAT_VERSION: u8 = 1;
-const SLIM_AUTH_API_KEY: u8 = 0;
-const SLIM_AUTH_CHATGPT: u8 = 1;
-const SLIM_AUTH_COOKIE: u8 = 2;
 
 const FULL_FILE_MAGIC: &[u8; 4] = b"CSWF";
 const FULL_FILE_VERSION: u8 = 1;
@@ -52,35 +38,10 @@ const FULL_PRESET_PASSPHRASE: &str = "gT7kQ9mV2xN4pL8sR1dH6zW3cB5yF0uJ_aE7nK2tP9
 
 const MAX_IMPORT_JSON_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_IMPORT_FILE_BYTES: u64 = 8 * 1024 * 1024;
-const SLIM_IMPORT_CONCURRENCY: usize = 6;
 
 #[tauri::command]
 pub fn get_codex_auth_path() -> Result<String, String> {
     crate::auth::get_codex_auth_file().map(|path| path.to_string_lossy().into_owned()).map_err(|error| error.to_string())
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct SlimPayload {
-    #[serde(rename = "v")]
-    version: u8,
-    #[serde(rename = "a", skip_serializing_if = "Option::is_none")]
-    active_name: Option<String>,
-    #[serde(rename = "c")]
-    accounts: Vec<SlimAccountPayload>,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct SlimAccountPayload {
-    #[serde(rename = "n")]
-    name: String,
-    #[serde(rename = "t")]
-    auth_type: u8,
-    #[serde(rename = "k", skip_serializing_if = "Option::is_none")]
-    api_key: Option<String>,
-    #[serde(rename = "r", skip_serializing_if = "Option::is_none")]
-    refresh_token: Option<String>,
-    #[serde(default, rename = "c", skip_serializing_if = "Option::is_none")]
-    session_cookie: Option<String>,
 }
 
 /// List all accounts with their info
@@ -100,21 +61,6 @@ pub async fn list_accounts() -> Result<Vec<AccountInfo>, String> {
         .collect();
 
     Ok(accounts)
-}
-
-/// Get the currently active account
-#[tauri::command]
-pub async fn get_active_account_info() -> Result<Option<AccountInfo>, String> {
-    let store = load_accounts().map_err(|e| e.to_string())?;
-    let active_id = store.active_account_id.as_deref();
-
-    if let Some(active) = get_active_account().map_err(|e| e.to_string())? {
-        let mut info = AccountInfo::from_stored(&active, active_id);
-        super::usage::apply_cached_account_metadata(&mut info);
-        Ok(Some(info))
-    } else {
-        Ok(None)
-    }
 }
 
 /// Add an account from an auth.json file
@@ -167,6 +113,8 @@ pub async fn add_account_from_cookie(
 
     #[cfg(windows)]
     {
+        #[cfg(desktop)]
+        let _refresh_guard = crate::tray::USAGE_REFRESH_LOCK.lock().await;
         let cookie = normalize_chatgpt_cookie(&cookie).map_err(|error| error.to_string())?;
         let session = fetch_chatgpt_cookie_session(&cookie)
             .await
@@ -216,76 +164,6 @@ pub async fn add_account_from_cookie(
     }
 }
 
-/// Switch to a different account
-#[tauri::command]
-pub async fn switch_account(account_id: String) -> Result<(), String> {
-    switch_account_by_id(&account_id).await
-}
-
-pub async fn switch_account_by_id(account_id: &str) -> Result<(), String> {
-    let _auth_guard = AUTH_OPERATION_LOCK.lock().await;
-    let mut store = load_accounts().map_err(|e| e.to_string())?;
-
-    let target_index = store
-        .accounts
-        .iter()
-        .position(|account| account.id == account_id)
-        .ok_or_else(|| format!("Account not found: {account_id}"))?;
-
-    if matches!(&store.accounts[target_index].auth_data, AuthData::Cookie { .. }) {
-        return Err("Cookie accounts only provide usage and cannot switch Codex login".into());
-    }
-
-    if store.active_account_id.as_deref() == Some(account_id) {
-        return Ok(());
-    }
-
-    ensure_codex_not_running()?;
-
-    // ChatGPT rotates single-use refresh tokens. Preserve the latest token
-    // before replacing auth.json, otherwise switching back restores a stale one.
-    if let Some(auth) = read_current_auth().map_err(|e| e.to_string())? {
-        if sync_active_account_tokens(&mut store, &auth) {
-            save_accounts(&store).map_err(|e| e.to_string())?;
-        }
-    }
-
-    let account = ensure_chatgpt_tokens_fresh_locked(&store.accounts[target_index])
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Write to ~/.codex/auth.json
-    switch_to_account(&account).map_err(|e| e.to_string())?;
-
-    // Update the active account in our store
-    set_active_account(account_id).map_err(|e| e.to_string())?;
-
-    // Update last_used_at
-    touch_account(account_id).map_err(|e| e.to_string())?;
-
-    // Restart Antigravity background process if it is running
-    // This allows it to pick up the new authorization file seamlessly
-    if let Ok(pids) = find_antigravity_processes() {
-        for pid in pids {
-            #[cfg(unix)]
-            {
-                let _ = std::process::Command::new("kill")
-                    .arg("-9")
-                    .arg(pid.to_string())
-                    .output();
-            }
-            #[cfg(windows)]
-            {
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/F", "/PID", &pid.to_string()])
-                    .output();
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// Remove an account
 #[tauri::command]
 pub async fn delete_account(account_id: String) -> Result<(), String> {
@@ -300,41 +178,6 @@ pub async fn rename_account(account_id: String, new_name: String) -> Result<(), 
     crate::auth::storage::update_account_metadata(&account_id, Some(new_name), None, None, None)
         .map_err(|e| e.to_string())?;
     Ok(())
-}
-
-/// Export minimal account config as a compact text string.
-/// For ChatGPT accounts, only refresh token is exported.
-#[tauri::command]
-pub async fn export_accounts_slim_text() -> Result<String, String> {
-    let store = load_accounts().map_err(|e| e.to_string())?;
-    encode_slim_payload_from_store(&store).map_err(|e| e.to_string())
-}
-
-/// Import minimal account config from a compact text string, skipping existing accounts.
-#[tauri::command]
-pub async fn import_accounts_slim_text(payload: String) -> Result<ImportAccountsSummary, String> {
-    let slim_payload = decode_slim_payload(&payload).map_err(|e| format!("{e:#}"))?;
-    let total_in_payload = slim_payload.accounts.len();
-
-    let current = load_accounts().map_err(|e| e.to_string())?;
-    let existing_names: HashSet<String> = current.accounts.iter().map(|a| a.name.clone()).collect();
-
-    let imported = build_store_from_slim_payload(slim_payload, &existing_names)
-        .await
-        .map_err(|e| {
-            format!(
-                "{e:#}\nHint: Slim import needs network access to refresh ChatGPT tokens. You can use Full encrypted file import when offline."
-            )
-        })?;
-    validate_imported_store(&imported).map_err(|e| format!("{e:#}"))?;
-
-    let (merged, summary) = merge_accounts_store(current, imported);
-    save_accounts(&merged).map_err(|e| e.to_string())?;
-    Ok(ImportAccountsSummary {
-        total_in_payload,
-        imported_count: summary.imported_count,
-        skipped_count: total_in_payload.saturating_sub(summary.imported_count),
-    })
 }
 
 /// Export full account config as an encrypted file.
@@ -381,330 +224,6 @@ pub async fn import_accounts_full_encrypted_bytes(
     let (merged, summary) = merge_accounts_store(current, imported);
     save_accounts(&merged).map_err(|e| e.to_string())?;
     Ok(summary)
-}
-
-/// Find all running Antigravity codex assistant processes
-fn find_antigravity_processes() -> anyhow::Result<Vec<u32>> {
-    let mut pids = Vec::new();
-
-    #[cfg(unix)]
-    {
-        // Use ps with custom format to get the pid and full command line
-        let output = std::process::Command::new("ps")
-            .args(["-eo", "pid,command"])
-            .output()?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines().skip(1) {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-
-            if let Some((pid_str, command)) = line.split_once(' ') {
-                let pid_str = pid_str.trim();
-                let command = command.trim();
-
-                // Antigravity processes have a specific path format
-                let is_antigravity = (command.contains(".antigravity/extensions/openai.chatgpt")
-                    || command.contains(".vscode/extensions/openai.chatgpt"))
-                    && (command.ends_with("codex app-server --analytics-default-enabled")
-                        || command.contains("/codex app-server"));
-
-                if is_antigravity {
-                    if let Ok(pid) = pid_str.parse::<u32>() {
-                        pids.push(pid);
-                    }
-                }
-            }
-        }
-    }
-
-    #[cfg(windows)]
-    {
-        // Use tasklist on Windows
-        // For Windows we might need a more precise WMI query to get command line args,
-        // but for now we look for codex.exe PIDs and verify they're not ours
-        let output = std::process::Command::new("tasklist")
-            .creation_flags(CREATE_NO_WINDOW)
-            .args(["/FI", "IMAGENAME eq codex.exe", "/FO", "CSV", "/NH"])
-            .output()?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            let parts: Vec<&str> = line.split(',').collect();
-            if parts.len() > 1 {
-                let name = parts[0].trim_matches('"').to_lowercase();
-                if name == "codex.exe" {
-                    let pid_str = parts[1].trim_matches('"');
-                    if let Ok(pid) = pid_str.parse::<u32>() {
-                        pids.push(pid);
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(pids)
-}
-
-fn encode_slim_payload_from_store(store: &AccountsStore) -> anyhow::Result<String> {
-    #[cfg(not(windows))]
-    if store
-        .accounts
-        .iter()
-        .any(|account| matches!(&account.auth_data, AuthData::Cookie { .. }))
-    {
-        anyhow::bail!("Cookie usage accounts can only be exported on Windows");
-    }
-
-    let active_name = store.active_account_id.as_ref().and_then(|active_id| {
-        store
-            .accounts
-            .iter()
-            .find(|account| account.id == *active_id)
-            .map(|account| account.name.clone())
-    });
-
-    let slim_accounts = store
-        .accounts
-        .iter()
-        .map(|account| match &account.auth_data {
-            AuthData::ApiKey { key } => SlimAccountPayload {
-                name: account.name.clone(),
-                auth_type: SLIM_AUTH_API_KEY,
-                api_key: Some(key.clone()),
-                refresh_token: None,
-                session_cookie: None,
-            },
-            AuthData::ChatGPT { refresh_token, .. } => SlimAccountPayload {
-                name: account.name.clone(),
-                auth_type: SLIM_AUTH_CHATGPT,
-                api_key: None,
-                refresh_token: Some(refresh_token.clone()),
-                session_cookie: None,
-            },
-            AuthData::Cookie { session_cookie, .. } => SlimAccountPayload {
-                name: account.name.clone(),
-                auth_type: SLIM_AUTH_COOKIE,
-                api_key: None,
-                refresh_token: None,
-                session_cookie: Some(session_cookie.clone()),
-            },
-        })
-        .collect();
-
-    let payload = SlimPayload {
-        version: SLIM_FORMAT_VERSION,
-        active_name,
-        accounts: slim_accounts,
-    };
-
-    let json = serde_json::to_vec(&payload).context("Failed to serialize slim payload")?;
-    let compressed = compress_bytes(&json).context("Failed to compress slim payload")?;
-
-    Ok(format!(
-        "{SLIM_EXPORT_PREFIX}{}",
-        URL_SAFE_NO_PAD.encode(compressed)
-    ))
-}
-
-fn decode_slim_payload(payload: &str) -> anyhow::Result<SlimPayload> {
-    let normalized: String = payload.chars().filter(|c| !c.is_whitespace()).collect();
-    if normalized.is_empty() {
-        anyhow::bail!("Import string is empty");
-    }
-
-    let encoded = normalized
-        .strip_prefix(SLIM_EXPORT_PREFIX)
-        .unwrap_or(&normalized);
-
-    let compressed = URL_SAFE_NO_PAD
-        .decode(encoded)
-        .context("Invalid slim import string (base64 decode failed)")?;
-
-    let decompressed = decompress_bytes_with_limit(&compressed, MAX_IMPORT_JSON_BYTES)
-        .context("Invalid slim import string (decompression failed)")?;
-
-    let parsed: SlimPayload = serde_json::from_slice(&decompressed)
-        .context("Invalid slim import string (JSON parse failed)")?;
-
-    validate_slim_payload(&parsed)?;
-    Ok(parsed)
-}
-
-fn validate_slim_payload(payload: &SlimPayload) -> anyhow::Result<()> {
-    if payload.version != SLIM_FORMAT_VERSION {
-        anyhow::bail!("Unsupported slim payload version: {}", payload.version);
-    }
-
-    let mut names = HashSet::new();
-
-    for account in &payload.accounts {
-        #[cfg(not(windows))]
-        if account.auth_type == SLIM_AUTH_COOKIE {
-            anyhow::bail!("Cookie usage accounts are only supported on Windows");
-        }
-
-        if account.name.trim().is_empty() {
-            anyhow::bail!("Slim import contains an account with empty name");
-        }
-
-        if !names.insert(account.name.clone()) {
-            anyhow::bail!(
-                "Slim import contains duplicate account name: {}",
-                account.name
-            );
-        }
-
-        match account.auth_type {
-            SLIM_AUTH_API_KEY => {
-                if account
-                    .api_key
-                    .as_ref()
-                    .map_or(true, |key| key.trim().is_empty())
-                {
-                    anyhow::bail!("API key is missing for account {}", account.name);
-                }
-            }
-            SLIM_AUTH_CHATGPT => {
-                if account
-                    .refresh_token
-                    .as_ref()
-                    .map_or(true, |token| token.trim().is_empty())
-                {
-                    anyhow::bail!("Refresh token is missing for account {}", account.name);
-                }
-            }
-            SLIM_AUTH_COOKIE => {
-                if account
-                    .session_cookie
-                    .as_ref()
-                    .map_or(true, |cookie| cookie.trim().is_empty())
-                {
-                    anyhow::bail!("Cookie header is missing for account {}", account.name);
-                }
-            }
-            _ => {
-                anyhow::bail!(
-                    "Unsupported auth type {} for account {}",
-                    account.auth_type,
-                    account.name
-                );
-            }
-        }
-    }
-
-    if let Some(active_name) = &payload.active_name {
-        if !names.contains(active_name) {
-            anyhow::bail!("Slim import references missing active account: {active_name}");
-        }
-    }
-
-    Ok(())
-}
-
-async fn build_store_from_slim_payload(
-    payload: SlimPayload,
-    existing_names: &HashSet<String>,
-) -> anyhow::Result<AccountsStore> {
-    let active_name = payload.active_name;
-    let import_candidates: Vec<SlimAccountPayload> = payload
-        .accounts
-        .into_iter()
-        .filter(|entry| !existing_names.contains(&entry.name))
-        .collect();
-
-    let accounts = restore_slim_accounts(import_candidates).await?;
-    let mut active_account_id = None;
-
-    if let Some(active) = active_name {
-        active_account_id = accounts
-            .iter()
-            .find(|account| {
-                account.name == active && !matches!(&account.auth_data, AuthData::Cookie { .. })
-            })
-            .map(|account| account.id.clone());
-    }
-
-    if active_account_id.is_none() {
-        active_account_id = accounts
-            .iter()
-            .find(|account| !matches!(&account.auth_data, AuthData::Cookie { .. }))
-            .map(|account| account.id.clone());
-    }
-
-    Ok(AccountsStore {
-        version: 1,
-        accounts,
-        active_account_id,
-    })
-}
-
-async fn restore_slim_accounts(
-    entries: Vec<SlimAccountPayload>,
-) -> anyhow::Result<Vec<StoredAccount>> {
-    if entries.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut restored = Vec::with_capacity(entries.len());
-    let mut tasks = stream::iter(entries.into_iter().map(|entry| async move {
-        let account_name = entry.name;
-        let account = match entry.auth_type {
-            SLIM_AUTH_API_KEY => StoredAccount::new_api_key(
-                account_name.clone(),
-                entry.api_key.context("API key payload is missing")?,
-            ),
-            SLIM_AUTH_CHATGPT => {
-                let refresh_token = entry
-                    .refresh_token
-                    .context("Refresh token payload is missing")?;
-                create_chatgpt_account_from_refresh_token(account_name.clone(), refresh_token)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Failed to restore ChatGPT account `{account_name}` from refresh token"
-                        )
-                    })?
-            }
-            SLIM_AUTH_COOKIE => {
-                let cookie = normalize_chatgpt_cookie(
-                    &entry
-                        .session_cookie
-                        .context("Cookie payload is missing")?,
-                )?;
-                let session = fetch_chatgpt_cookie_session(&cookie)
-                    .await
-                    .context("Failed to restore Cookie account")?;
-                let mut account = StoredAccount::new_cookie(
-                    account_name,
-                    session.email.clone(),
-                    session.plan_type.clone(),
-                    session.account_id.clone(),
-                    cookie,
-                );
-                cache_chatgpt_cookie_session(&account.id, session);
-                let usage = get_account_usage(&account)
-                    .await
-                    .context("Failed to read usage for Cookie account")?;
-                if let Some(error) = usage.error {
-                    anyhow::bail!("Failed to read usage for Cookie account: {error}");
-                }
-                account.plan_type = usage.plan_type;
-                account
-            }
-            _ => anyhow::bail!("Unsupported auth type in slim payload"),
-        };
-        Ok::<StoredAccount, anyhow::Error>(account)
-    }))
-    .buffered(SLIM_IMPORT_CONCURRENCY);
-
-    while let Some(account_result) = tasks.next().await {
-        restored.push(account_result?);
-    }
-
-    Ok(restored)
 }
 
 fn encode_full_encrypted_store(store: &AccountsStore, passphrase: &str) -> anyhow::Result<Vec<u8>> {

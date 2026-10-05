@@ -1,13 +1,12 @@
-//! Account switching logic - writes credentials to ~/.codex/auth.json
+//! Read and import Codex credentials without changing the Codex login
 
 use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use chrono::Utc;
 
 use crate::types::{
-    parse_chatgpt_id_token_claims, AuthData, AuthDotJson, StoredAccount, TokenData,
+    parse_chatgpt_id_token_claims, AuthDotJson, StoredAccount,
 };
 
 /// Get the official Codex home directory
@@ -24,63 +23,6 @@ pub fn get_codex_home() -> Result<PathBuf> {
 /// Get the path to the official auth.json file
 pub fn get_codex_auth_file() -> Result<PathBuf> {
     Ok(get_codex_home()?.join("auth.json"))
-}
-
-/// Switch to a specific account by writing its credentials to ~/.codex/auth.json
-pub fn switch_to_account(account: &StoredAccount) -> Result<()> {
-    let codex_home = get_codex_home()?;
-
-    // Ensure the codex home directory exists
-    fs::create_dir_all(&codex_home)
-        .with_context(|| format!("Failed to create codex home: {}", codex_home.display()))?;
-
-    let auth_json = create_auth_json(account)?;
-
-    let auth_path = codex_home.join("auth.json");
-    let content =
-        serde_json::to_string_pretty(&auth_json).context("Failed to serialize auth.json")?;
-
-    fs::write(&auth_path, content)
-        .with_context(|| format!("Failed to write auth.json: {}", auth_path.display()))?;
-
-    // Set restrictive permissions on Unix
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(&auth_path, perms)?;
-    }
-
-    Ok(())
-}
-
-/// Create an AuthDotJson structure from a StoredAccount
-fn create_auth_json(account: &StoredAccount) -> Result<AuthDotJson> {
-    match &account.auth_data {
-        AuthData::ApiKey { key } => Ok(AuthDotJson {
-            openai_api_key: Some(key.clone()),
-            tokens: None,
-            last_refresh: None,
-        }),
-        AuthData::ChatGPT {
-            id_token,
-            access_token,
-            refresh_token,
-            account_id,
-        } => Ok(AuthDotJson {
-            openai_api_key: None,
-            tokens: Some(TokenData {
-                id_token: id_token.clone(),
-                access_token: access_token.clone(),
-                refresh_token: refresh_token.clone(),
-                account_id: account_id.clone(),
-            }),
-            last_refresh: Some(Utc::now()),
-        }),
-        AuthData::Cookie { .. } => {
-            anyhow::bail!("Cookie accounts are for usage display and cannot be switched into Codex")
-        }
-    }
 }
 
 /// Import an account from an existing auth.json file
@@ -137,14 +79,6 @@ pub fn read_current_auth() -> Result<Option<AuthDotJson>> {
         .with_context(|| format!("Failed to parse auth.json: {}", path.display()))?;
 
     Ok(Some(auth))
-}
-
-/// Check if there is an active Codex login
-pub fn has_active_login() -> Result<bool> {
-    match read_current_auth()? {
-        Some(auth) => Ok(auth.openai_api_key.is_some() || auth.tokens.is_some()),
-        None => Ok(false),
-    }
 }
 
 #[cfg(test)]

@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DesktopReopenPreference } from "../lib/desktopReopen";
-import type { CodexClosePreference } from "../lib/codexClosePreference";
 import { invokeBackend, isTauriRuntime, isWindowsPlatform } from "../lib/platform";
 import type { FloatingOptions } from "../FloatingUsage";
 import type { DockDisplayMode } from "../types";
-import { usageRefreshIntervals } from "../lib/usageDisplay";
+
 
 type TrayDisplayMode = "icon_and_session" | "active_usage_text" | "hidden";
 interface DisplaySettings {
@@ -13,18 +11,10 @@ interface DisplaySettings {
 }
 
 interface SettingsModalProps {
-  reopenPreference: DesktopReopenPreference;
-  onReopenPreferenceChange: (value: DesktopReopenPreference) => void;
-  closePreference: CodexClosePreference;
-  onClosePreferenceChange: (value: CodexClosePreference) => void;
   onClose: () => void;
 }
 
 export function SettingsModal({
-  reopenPreference,
-  onReopenPreferenceChange,
-  closePreference,
-  onClosePreferenceChange,
   onClose,
 }: SettingsModalProps) {
   const [displaySettings, setDisplaySettings] = useState<DisplaySettings | null>(null);
@@ -105,16 +95,6 @@ export function SettingsModal({
   };
 
   const selectClassName = "w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 disabled:opacity-50";
-  const changeRefreshInterval = async (seconds: number) => {
-    setSaving(true);
-    setError(null);
-    try {
-      await invokeBackend("set_usage_refresh_interval", { seconds });
-      await loadDisplaySettings();
-    } catch (err) { setError(String(err)); }
-    finally { setSaving(false); }
-  };
-
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
       <div role="dialog" aria-modal="true" aria-labelledby="settings-title" className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl w-full max-w-md mx-4 shadow-xl">
@@ -126,18 +106,20 @@ export function SettingsModal({
             <>
               {displaySettings ? (
                 <>
+                  {!isWindowsPlatform() && <>
                   <label htmlFor="tray-display-mode" className="block text-sm font-medium text-gray-900 dark:text-gray-100">系统托盘</label>
                   <select
                     id="tray-display-mode"
-                    value={isWindowsPlatform() && displaySettings.tray_display_mode !== "icon_and_session" ? "icon_and_session" : displaySettings.tray_display_mode}
+                    value={displaySettings.tray_display_mode}
                     disabled={saving}
                     onChange={(event) => void changeDisplaySetting("set_tray_display_mode", event.target.value)}
                     className={selectClassName}
                   >
-                    <option value="icon_and_session">{isWindowsPlatform() ? "显示图标（悬停查看额度）" : "图标 + 额度时段"}</option>
-                    {!isWindowsPlatform() && <option value="active_usage_text">每小时 + 每周额度</option>}
-                    {!isWindowsPlatform() && <option value="hidden">隐藏</option>}
+                    <option value="icon_and_session">图标 + 额度时段</option>
+                    <option value="active_usage_text">每小时 + 每周额度</option>
+                    <option value="hidden">隐藏</option>
                   </select>
+                  </>}
                   {displaySettings.dock_display_mode !== null && (
                     <>
                       <label htmlFor="dock-display-mode" className="block text-sm font-medium text-gray-900 dark:text-gray-100">程序坞图标</label>
@@ -157,15 +139,11 @@ export function SettingsModal({
                 </>
               ) : !error && <p className="text-sm text-gray-500 dark:text-gray-400">正在加载显示设置…</p>}
               {error && <p role="alert" className="text-sm text-red-600 dark:text-red-300">无法更新显示设置：{error}</p>}
-              <div className="border-t border-gray-100 dark:border-gray-800" />
+              {!isWindowsPlatform() && <div className="border-t border-gray-100 dark:border-gray-800" />}
             </>
           )}
           {floating && <section className="grid gap-3">
-            <label htmlFor="usage-refresh-interval" className="text-sm font-medium">额度自动刷新</label>
-            <select id="usage-refresh-interval" className={selectClassName} disabled={saving} value={floating.usage_refresh_interval_seconds} onChange={(event) => void changeRefreshInterval(Number(event.target.value))}>
-              {usageRefreshIntervals.map(({ seconds, label }) => <option key={seconds} value={seconds}>{label}</option>)}
-            </select>
-            <p className="text-xs text-gray-500">此间隔用于获取最新额度，不改变 Codex 的额度重置时间。主界面显示时更新所有账户，隐藏时更新当前显示账户。</p>
+            <p className="text-xs text-gray-500">仅自动刷新悬浮窗当前显示的账户，默认每 5 分钟，可在账户卡片或悬浮窗右键单独设置。其他账户只手动刷新，关闭悬浮窗后暂停自动刷新。</p>
             <label className="text-sm font-medium"><input type="checkbox" checked={floating.floating_usage_enabled} disabled={saving} onChange={(event) => void changeFloating({ enabled: event.target.checked })} /> 桌面悬浮额度窗</label>
             <label htmlFor="floating-layout" className="text-sm">悬浮窗排列方式</label>
             <select id="floating-layout" className={selectClassName} disabled={saving} value={String(floating.floating_usage_vertical)} onChange={(event) => void changeFloating({ vertical: event.target.value === "true" })}>
@@ -184,28 +162,7 @@ export function SettingsModal({
             <p className="text-xs text-gray-500">右键悬浮窗可以选择显示账户、打开主界面或关闭悬浮窗。</p>
           </section>}
           <p className="text-xs text-gray-500">可以在主界面或悬浮窗手动刷新。网络异常时保留上次成功数据。</p>
-          <label htmlFor="codex-close-preference" className="block text-sm font-medium text-gray-900 dark:text-gray-100">
-            Codex 关闭方式
-          </label>
-          <select id="codex-close-preference" value={closePreference} onChange={(event) => onClosePreferenceChange(event.target.value as CodexClosePreference)} className={selectClassName}>
-            <option value="ask">每次询问</option>
-            <option value="graceful">正常关闭</option>
-            <option value="force">强制关闭</option>
-          </select>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            正常关闭会让 Codex 完成清理；强制关闭会立即结束进程，可能丢失未保存的内容。
-          </p>
-          <label htmlFor="desktop-reopen-preference" className="block text-sm font-medium text-gray-900 dark:text-gray-100">
-            关闭后重新打开 Codex
-          </label>
-          <select id="desktop-reopen-preference" value={reopenPreference} onChange={(event) => onReopenPreferenceChange(event.target.value as DesktopReopenPreference)} className={selectClassName}>
-            <option value="ask">每次询问</option>
-            <option value="always">重新打开桌面版</option>
-            <option value="never">保持关闭</option>
-          </select>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            适用于检测到的 macOS 和 Windows Codex 桌面版。切换账户成功后可自动重新打开。
-          </p>
+          {desktop && <button type="button" className="text-sm text-gray-500 hover:text-gray-900 dark:hover:text-gray-100" onClick={() => { void invokeBackend("open_usage_log").catch((err) => setError(String(err))); }}>打开额度刷新日志</button>}
         </div>
         <div className="flex justify-end p-5 border-t border-gray-100 dark:border-gray-800">
           <button onClick={onClose} disabled={saving} className="px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 disabled:opacity-50">完成</button>

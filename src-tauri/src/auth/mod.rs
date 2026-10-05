@@ -5,7 +5,7 @@ pub mod storage;
 pub mod switcher;
 pub mod token_refresh;
 
-// ponytail: refreshes are rare; one global lock keeps auth.json and accounts.json ordered.
+// 凭证更新共用一个锁，避免同时刷新同一份账户凭证。
 pub(crate) static AUTH_OPERATION_LOCK: tokio::sync::Mutex<()> =
     tokio::sync::Mutex::const_new(());
 

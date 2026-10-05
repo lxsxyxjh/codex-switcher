@@ -10,13 +10,12 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use tokio::runtime::Runtime;
 
 use crate::commands::{
-    add_account_from_auth_json_text, add_account_from_file, cancel_login, check_codex_processes,
+    add_account_from_auth_json_text, add_account_from_file, cancel_login,
     complete_login, delete_account, export_accounts_full_encrypted_bytes,
-    export_accounts_slim_text, fetch_usage, get_account_usage_stats, get_active_account_info,
-    import_accounts_full_encrypted_bytes, import_accounts_slim_text,
-    kill_codex_processes, list_accounts, refresh_account_metadata, fetch_all_accounts_usage,
-    rename_account, start_login, switch_account, warmup_account,
-    warmup_all_accounts,
+    fetch_usage,
+    import_accounts_full_encrypted_bytes,
+    list_accounts, refresh_account_metadata,
+    rename_account, start_login,
 };
 
 #[derive(Debug, Deserialize)]
@@ -43,15 +42,10 @@ struct LoginArgs {
 }
 
 #[derive(Debug, Deserialize)]
-struct ImportSlimArgs {
-    payload: String,
-}
-
-#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CloseCodexArgs {
-    reopen_desktop: Option<bool>,
-    force_close: Option<bool>,
+struct UsageOptionsArgs {
+    scale: Option<u16>, account_id: Option<String>, show_used: Option<bool>,
+    vertical: Option<bool>, edge_hide: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -130,8 +124,12 @@ fn handle_request(mut request: Request, runtime: &Runtime, dist_dir: &Path) -> a
 
 async fn invoke_web_command(command: &str, payload: Value) -> Result<Value, String> {
     match command {
+        "get_floating_usage_options" => to_json(crate::commands::get_floating_usage_options()?),
+        "set_floating_usage_options" => {
+            let args: UsageOptionsArgs = parse_args(payload)?;
+            to_json(crate::commands::update_floating_usage_options(args.scale, args.account_id, args.show_used, args.vertical, args.edge_hide)?)
+        }
         "list_accounts" => to_json(list_accounts().await?),
-        "get_active_account_info" => to_json(get_active_account_info().await?),
         "add_account_from_file" => {
             let args: FileImportArgs = parse_args(payload)?;
             to_json(add_account_from_file(args.path, args.name).await?)
@@ -144,23 +142,9 @@ async fn invoke_web_command(command: &str, payload: Value) -> Result<Value, Stri
             let args: AccountIdArgs = parse_args(payload)?;
             to_json(fetch_usage(&args.account_id).await?)
         }
-        "get_account_usage_stats" => {
-            let args: AccountIdArgs = parse_args(payload)?;
-            to_json(get_account_usage_stats(args.account_id).await?)
-        }
         "refresh_account_metadata" => {
             let args: AccountIdArgs = parse_args(payload)?;
             to_json(refresh_account_metadata(args.account_id).await?)
-        }
-        "refresh_all_accounts_usage" => to_json(fetch_all_accounts_usage().await?),
-        "warmup_account" => {
-            let args: AccountIdArgs = parse_args(payload)?;
-            to_json(warmup_account(args.account_id).await?)
-        }
-        "warmup_all_accounts" => to_json(warmup_all_accounts().await?),
-        "switch_account" => {
-            let args: AccountIdArgs = parse_args(payload)?;
-            to_json(switch_account(args.account_id).await?)
         }
         "delete_account" => {
             let args: AccountIdArgs = parse_args(payload)?;
@@ -176,11 +160,6 @@ async fn invoke_web_command(command: &str, payload: Value) -> Result<Value, Stri
         }
         "complete_login" => to_json(complete_login().await?),
         "cancel_login" => to_json(cancel_login().await?),
-        "export_accounts_slim_text" => to_json(export_accounts_slim_text().await?),
-        "import_accounts_slim_text" => {
-            let args: ImportSlimArgs = parse_args(payload)?;
-            to_json(import_accounts_slim_text(args.payload).await?)
-        }
         "export_accounts_full_encrypted_bytes" => {
             let encoded = STANDARD.encode(export_accounts_full_encrypted_bytes().await?);
             to_json(encoded)
@@ -191,11 +170,6 @@ async fn invoke_web_command(command: &str, payload: Value) -> Result<Value, Stri
                 .decode(args.contents_base64)
                 .map_err(|error| format!("Failed to decode uploaded backup: {error}"))?;
             to_json(import_accounts_full_encrypted_bytes(bytes).await?)
-        }
-        "check_codex_processes" => to_json(check_codex_processes().await?),
-        "kill_codex_processes" => {
-            let args: CloseCodexArgs = parse_args(payload)?;
-            to_json(kill_codex_processes(args.reopen_desktop, args.force_close).await?)
         }
         _ => Err(format!("Unsupported web command: {command}")),
     }

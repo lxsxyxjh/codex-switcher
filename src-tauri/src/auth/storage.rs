@@ -108,9 +108,7 @@ pub fn load_app_settings() -> Result<AppSettings> {
 
     let mut settings: AppSettings = serde_json::from_str(&content)
         .with_context(|| format!("Failed to parse settings file: {}", path.display()))?;
-    if ![30, 60, 120, 300, 600].contains(&settings.usage_refresh_interval_seconds) {
-        settings.usage_refresh_interval_seconds = 300;
-    }
+    settings.account_usage_refresh_intervals.retain(|_, seconds| [30, 60, 120, 300, 600].contains(seconds));
 
     Ok(settings)
 }
@@ -252,51 +250,10 @@ fn remove_account_from_store(store: &mut AccountsStore, account_id: &str) -> Res
     Ok(())
 }
 
-/// Update the active account ID
-pub fn set_active_account(account_id: &str) -> Result<()> {
-    let mut store = load_accounts()?;
-
-    // Verify the account exists
-    let account = store
-        .accounts
-        .iter()
-        .find(|account| account.id == account_id)
-        .ok_or_else(|| anyhow::anyhow!("Account not found: {account_id}"))?;
-    if matches!(&account.auth_data, AuthData::Cookie { .. }) {
-        anyhow::bail!("Cookie accounts cannot become the active Codex login");
-    }
-
-    store.active_account_id = Some(account_id.to_string());
-    save_accounts(&store)?;
-    Ok(())
-}
-
 /// Get an account by ID
 pub fn get_account(account_id: &str) -> Result<Option<StoredAccount>> {
     let store = load_accounts()?;
     Ok(store.accounts.into_iter().find(|a| a.id == account_id))
-}
-
-/// Get the currently active account
-pub fn get_active_account() -> Result<Option<StoredAccount>> {
-    let store = load_accounts()?;
-    let active_id = match &store.active_account_id {
-        Some(id) => id,
-        None => return Ok(None),
-    };
-    Ok(store.accounts.into_iter().find(|a| a.id == *active_id))
-}
-
-/// Update an account's last_used_at timestamp
-pub fn touch_account(account_id: &str) -> Result<()> {
-    let mut store = load_accounts()?;
-
-    if let Some(account) = store.accounts.iter_mut().find(|a| a.id == account_id) {
-        account.last_used_at = Some(chrono::Utc::now());
-        save_accounts(&store)?;
-    }
-
-    Ok(())
 }
 
 /// Update an account's metadata (name, email, plan_type, subscription expiry)
@@ -554,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_rotated_tokens_before_switching_away_and_back() {
+    fn preserves_rotated_tokens_from_codex_auth() {
         let account_a = account("A", "workspace-a", "a1");
         let account_a_id = account_a.id.clone();
         let account_b = account("B", "workspace-b", "b1");

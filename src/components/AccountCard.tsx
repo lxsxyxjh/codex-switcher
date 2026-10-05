@@ -1,28 +1,19 @@
-import { useCallback, useState, useRef, useEffect } from "react";
-import type { AccountResetCredits, AccountUsageStats as AccountUsageStatsInfo, AccountWithUsage } from "../types";
-import { invokeBackend } from "../lib/platform";
-import { AccountUsageStats } from "./AccountUsageStats";
-import { ResetCreditsMenu } from "./ResetCreditsMenu";
+import { useState, useRef, useEffect } from "react";
+import type { AccountWithUsage } from "../types";
+import { invokeBackend, isTauriRuntime } from "../lib/platform";
+import { usageRefreshIntervals } from "../lib/usageDisplay";
 import { UsageBar } from "./UsageBar";
 
-const RESET_CREDITS_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const USAGE_STATS_OPEN_STORAGE_KEY_PREFIX = "usage-stats-open:";
 
 interface AccountCardProps {
   account: AccountWithUsage;
-  onSwitch: () => void;
-  onWarmup: () => Promise<void>;
+  selected: boolean;
+  floatingEnabled: boolean;
+  refreshInterval: number;
+  onSelect: () => void;
   onDelete: () => void;
   onRefresh: () => Promise<unknown>;
   onRename: (newName: string) => Promise<void>;
-  switching?: boolean;
-  switchDisabled?: boolean;
-  codexRunning?: boolean;
-  warmingUp?: boolean;
-  autoWarmupEnabled?: boolean;
-  autoWarmupManagedByAll?: boolean;
-  autoWarmupLabel?: string;
-  onToggleAutoWarmup?: () => void;
 }
 
 function formatLastRefresh(date: Date | null): string {
@@ -84,56 +75,33 @@ function getSubscriptionStatus(timestamp: string | null | undefined): {
 
 export function AccountCard({
   account,
-  onSwitch,
-  onWarmup,
+  selected,
+  floatingEnabled,
+  refreshInterval,
+  onSelect,
   onDelete,
   onRefresh,
   onRename,
-  switching,
-  switchDisabled,
-  codexRunning = false,
-  warmingUp,
-  autoWarmupEnabled = false,
-  autoWarmupManagedByAll = false,
-  autoWarmupLabel,
-  onToggleAutoWarmup,
 }: AccountCardProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const floatingDisplayed = selected && floatingEnabled;
+  const autoRefreshActive = floatingDisplayed && account.auth_mode !== "api_key";
+  const [intervalSaving, setIntervalSaving] = useState(false);
+  const [intervalError, setIntervalError] = useState<string | null>(null);
+  const changeInterval = async (seconds: number) => {
+    setIntervalSaving(true);
+    setIntervalError(null);
+    try {
+      await invokeBackend("set_usage_refresh_interval", { accountId: account.id, seconds });
+    } catch (error) { setIntervalError(String(error)); }
+    finally { setIntervalSaving(false); }
+  };
   const [lastRefresh, setLastRefresh] = useState<Date | null>(
     account.usage && !account.usage.error ? new Date() : null
   );
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(account.name);
-  const [resetCredits, setResetCredits] = useState<AccountResetCredits | null>(null);
-  const [statsOpen, setStatsOpen] = useState<boolean>(() => {
-    if (typeof window === "undefined") return account.is_active;
-    try {
-      const stored = window.localStorage.getItem(
-        `${USAGE_STATS_OPEN_STORAGE_KEY_PREFIX}${account.id}`
-      );
-      if (stored !== null) return stored === "1";
-    } catch {
-      // Fall back to default.
-    }
-    return account.is_active;
-  });
   const inputRef = useRef<HTMLInputElement>(null);
-  const resetRequestSeq = useRef(0);
-
-  const toggleStatsOpen = () => {
-    setStatsOpen((prev) => {
-      const next = !prev;
-      try {
-        window.localStorage.setItem(
-          `${USAGE_STATS_OPEN_STORAGE_KEY_PREFIX}${account.id}`,
-          next ? "1" : "0"
-        );
-      } catch {
-        // Ignore storage errors; stats still toggle for the current session.
-      }
-      return next;
-    });
-  };
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -149,9 +117,12 @@ export function AccountCard({
   }, [account.usage]);
 
   const handleRefresh = async () => {
+    if (isRefreshing || account.usageLoading) return;
     setIsRefreshing(true);
     try {
       await onRefresh();
+    } catch (error) {
+      console.error("Failed to refresh account usage:", error);
     } finally {
       setIsRefreshing(false);
     }
@@ -205,53 +176,10 @@ export function AccountCard({
   const showSubscriptionStatus =
     account.auth_mode === "chat_g_p_t" && account.plan_type?.toLowerCase() !== "free";
   const subscriptionStatus = getSubscriptionStatus(account.subscription_expires_at);
-  const compactResetCredits = !account.is_active;
-
-  const loadResetCredits = useCallback(async () => {
-    const requestId = ++resetRequestSeq.current;
-
-    if (account.auth_mode !== "chat_g_p_t") {
-      setResetCredits(null);
-      return;
-    }
-    if (statsOpen) return;
-
-    try {
-      const stats = await invokeBackend<AccountUsageStatsInfo>("get_account_usage_stats", {
-        accountId: account.id,
-      });
-      if (requestId !== resetRequestSeq.current) return;
-      setResetCredits(stats.account_id === account.id ? stats.reset_credits : null);
-    } catch {
-      if (requestId !== resetRequestSeq.current) return;
-      setResetCredits(null);
-    }
-  }, [account.auth_mode, account.id, statsOpen]);
-
-  const handleStatsLoaded = useCallback(
-    (stats: AccountUsageStatsInfo | null) => {
-      setResetCredits(stats?.account_id === account.id ? stats.reset_credits : null);
-    },
-    [account.id]
-  );
-
-  useEffect(() => {
-    void loadResetCredits();
-    const timer = window.setInterval(() => {
-      void loadResetCredits();
-    }, RESET_CREDITS_REFRESH_INTERVAL_MS);
-
-    return () => {
-      resetRequestSeq.current += 1;
-      window.clearInterval(timer);
-    };
-  }, [loadResetCredits]);
-
-
   return (
     <div
       className={`relative rounded-xl border p-5 transition-all duration-200 ${
-        account.is_active
+        selected
           ? "bg-white dark:bg-gray-900 border-emerald-400 shadow-sm"
           : "bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
       }`}
@@ -260,7 +188,7 @@ export function AccountCard({
       <div className="flex items-start justify-between mb-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            {account.is_active && (
+            {selected && (
               <span className="flex h-2 w-2">
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
               </span>
@@ -300,7 +228,7 @@ export function AccountCard({
           {/* Refresh */}
           <button
             onClick={handleRefresh}
-            disabled={isRefreshing}
+            disabled={isRefreshing || account.usageLoading}
             className="p-1 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors disabled:opacity-50"
             title="刷新额度"
           >
@@ -312,16 +240,15 @@ export function AccountCard({
           >
             {planDisplay}
           </span>
-          <ResetCreditsMenu
-            compact={compactResetCredits}
-            resetCredits={resetCredits}
-          />
+          {floatingDisplayed && <span className="text-xs text-sky-600 dark:text-sky-400">悬浮窗显示中</span>}
         </div>
       </div>
 
       {/* Usage */}
       <div className="mb-3">
         <UsageBar usage={account.usage} loading={isRefreshing || account.usageLoading} />
+        {isTauriRuntime() && <label className="mt-3 inline-block text-xs text-gray-500">{autoRefreshActive ? "自动刷新（悬浮窗显示中）" : "仅手动刷新"} {autoRefreshActive && <select aria-label={`${account.name}自动刷新间隔`} value={refreshInterval} disabled={intervalSaving} onChange={(event) => { void changeInterval(Number(event.target.value)); }} className="ml-2 rounded-lg border border-gray-200 bg-transparent px-2 py-1 dark:border-gray-700">{usageRefreshIntervals.map(({ seconds, label }) => <option key={seconds} value={seconds}>{label}</option>)}</select>}</label>}
+        {intervalError && <p role="alert" className="text-xs text-red-500">{intervalError}</p>}
       </div>
 
       {/* Last refresh time */}
@@ -338,96 +265,7 @@ export function AccountCard({
 
       {/* Actions */}
       <div className="flex gap-2 mt-3">
-        {account.auth_mode === "cookie" ? (
-          <div className="flex-1 px-4 py-2 text-center text-sm font-medium rounded-lg bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
-            仅查询额度
-          </div>
-        ) : account.is_active ? (
-          <button
-            disabled
-            className="flex-1 px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700 cursor-default"
-          >
-            ✓ 当前使用中
-          </button>
-        ) : (
-          <button
-            onClick={onSwitch}
-            disabled={switching || switchDisabled}
-            className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-              codexRunning
-                ? "bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 text-blue-800 dark:text-blue-300"
-                : "bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:hover:bg-gray-200 text-white dark:text-gray-900"
-            }`}
-            title={codexRunning ? "关闭正在运行的 Codex 进程并切换账户" : undefined}
-          >
-            {codexRunning && !switching && (
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.3 3.9 1.8 18.1A2 2 0 003.5 21h17a2 2 0 001.7-2.9L13.7 3.9a2 2 0 00-3.4 0Z" />
-              </svg>
-            )}
-            {switching ? "正在切换…" : "切换账户"}
-          </button>
-        )}
-        {account.auth_mode !== "cookie" && (
-          <button
-            onClick={() => {
-              void onWarmup();
-            }}
-            disabled={warmingUp}
-            className={`px-3 py-2 text-sm rounded-lg transition-colors ${
-              warmingUp
-                ? "bg-amber-100 dark:bg-amber-900/30 text-amber-500 dark:text-amber-300"
-                : "bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/40 text-amber-700 dark:text-amber-300"
-            }`}
-            title={warmingUp ? "正在发送预热请求…" : "发送轻量预热请求"}
-          >
-            ⚡
-          </button>
-        )}
-        {onToggleAutoWarmup && account.auth_mode !== "cookie" && (
-          <button
-            onClick={onToggleAutoWarmup}
-            disabled={autoWarmupManagedByAll}
-            className={`px-3 py-2 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
-              autoWarmupEnabled
-                ? "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300"
-                : "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300"
-            } disabled:opacity-60`}
-            title={
-              autoWarmupManagedByAll
-                ? "已为所有账户开启自动预热"
-                : autoWarmupEnabled
-                ? "关闭此账户的自动预热"
-                : "开启此账户的自动预热"
-            }
-          >
-            <span className="flex items-center gap-1">
-              <span>♻</span>
-              <span>{autoWarmupLabel ?? (autoWarmupEnabled ? "开启" : "关闭")}</span>
-            </span>
-          </button>
-        )}
-        {account.auth_mode !== "cookie" && <button
-          onClick={toggleStatsOpen}
-          className={`px-3 py-2 text-sm rounded-lg transition-colors ${
-            statsOpen
-              ? "bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300"
-              : "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300"
-          }`}
-          title={statsOpen ? "收起额度统计" : "显示额度统计"}
-        >
-          <svg
-            className="h-4 w-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <path d="M4 19V5" strokeLinecap="round" />
-            <path d="M4 19h16" strokeLinecap="round" />
-            <path d="M8 15l3-4 3 2 4-6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>}
+        <button onClick={onSelect} disabled={selected} className="grow rounded-lg bg-sky-50 px-4 py-2 text-sm text-sky-700 disabled:opacity-60 dark:bg-sky-900/20 dark:text-sky-300">{selected ? "当前查看账户" : "查看此账户额度"}</button>
         <button
           onClick={onDelete}
           className="px-3 py-2 text-sm rounded-lg bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-300 transition-colors"
@@ -437,14 +275,6 @@ export function AccountCard({
         </button>
       </div>
 
-      <AccountUsageStats
-        accountId={account.id}
-        enabled={account.auth_mode === "chat_g_p_t"}
-        open={statsOpen}
-        usage={account.usage}
-        usageLoading={account.usageLoading}
-        onStatsLoaded={handleStatsLoaded}
-      />
     </div>
   );
 }

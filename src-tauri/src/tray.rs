@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     LazyLock, Mutex,
 };
 use std::time::{Duration, Instant};
@@ -13,10 +12,10 @@ use tauri::{
 };
 
 use crate::{
-    api::usage::{get_account_usage, refresh_all_usage},
+    api::usage::get_account_usage,
     auth::{get_accounts_file, load_accounts, load_app_settings, save_app_settings},
     commands::{
-        is_codex_running_switch_block, restore_main_window, switch_account_by_id,
+        restore_main_window,
         window::{FLOATING_USAGE_WINDOW, TRAY_WINDOW},
     },
     types::{
@@ -26,15 +25,12 @@ use crate::{
 
 static TRAY_USAGE: LazyLock<Mutex<HashMap<String, UsageInfo>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-static TRAY_SWITCH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-static TRAY_SWITCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const TRAY_ID: &str = "codex-switcher-tray";
 const TRAY_ICON: tauri::image::Image<'static> = tauri::include_image!("./icons/tray.png");
 const TRAY_REFRESH_EVENT: &str = "tray-refresh";
 const USAGE_UPDATED_EVENT: &str = "usage-updated";
 const ACCOUNTS_CHANGED_EVENT: &str = "accounts-changed";
-const SWITCH_ACCOUNT_BLOCKED_EVENT: &str = "switch-account-blocked";
 const ACCOUNT_ITEM_PREFIX: &str = "account:";
 const OPEN_ITEM_ID: &str = "open";
 const QUIT_ITEM_ID: &str = "quit";
@@ -44,18 +40,15 @@ const TRAY_WIDTH: f64 = 300.0;
 const TRAY_HEIGHT: f64 = 420.0;
 const FLOATING_USAGE_WIDTH: f64 = 260.0;
 const FLOATING_USAGE_HEIGHT: f64 = 48.0;
-static USAGE_REFRESH_SECONDS: AtomicU64 = AtomicU64::new(300);
-pub fn set_usage_refresh_interval(seconds: u64) {
-    USAGE_REFRESH_SECONDS.store(seconds, Ordering::Release);
+static LAST_USAGE_REFRESH: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+// 所有后台网络任务共用一个锁，自动刷新忙时跳过，手动操作等待。
+pub static USAGE_REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub fn reset_usage_refresh_timer(account_id: &str) {
+    if let Ok(mut last) = LAST_USAGE_REFRESH.lock() { last.insert(account_id.to_string(), Instant::now()); }
+    let interval = load_app_settings().unwrap_or_default().account_usage_refresh_intervals.get(account_id).copied().unwrap_or(300);
+    crate::api::usage::write_usage_log(&format!("倒计时重置 account={account_id} interval={interval}s next_due={}（仅悬浮窗显示此账户时自动刷新）", (chrono::Local::now() + chrono::Duration::seconds(interval as i64)).format("%Y-%m-%d %H:%M:%S")));
 }
 const ACCOUNT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
-
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SwitchAccountBlockedPayload {
-    account_id: String,
-    error: String,
-}
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
@@ -242,6 +235,7 @@ fn watch_system_theme<R: Runtime>(app: AppHandle<R>) {
 
 /// Store usage updates and notify the open windows and native tray menu.
 pub fn ingest_usage<R: Runtime>(app: &AppHandle<R>, mut usages: Vec<UsageInfo>) {
+    for usage in &usages { reset_usage_refresh_timer(&usage.account_id); }
     let account_ids = load_accounts().ok().map(|store| store.accounts.into_iter().map(|account| account.id).collect::<HashSet<_>>());
     if let Ok(mut cache) = TRAY_USAGE.lock() {
         if let Some(account_ids) = account_ids {
@@ -499,6 +493,11 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, store: &AccountsStore) -> tauri::R
                 .build(app)?,
         )?;
     } else {
+        let settings = load_app_settings().unwrap_or_default();
+        let displayed_id = settings.floating_usage_account_id.as_deref()
+            .filter(|id| store.accounts.iter().any(|account| account.id == *id))
+            .or_else(|| account_for_usage_poll(store).map(|account| account.id.as_str()));
+        menu.append(&MenuItemBuilder::with_id("usage-accounts-label", "查看额度账户").enabled(false).build(app)?)?;
         for account in &store.accounts {
             let usage_only = matches!(&account.auth_data, crate::types::AuthData::Cookie { .. });
             let account_name = if usage_only {
@@ -509,8 +508,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, store: &AccountsStore) -> tauri::R
             let label = format!("{}{}", account_name, usage_suffix(&account.id));
             let item =
                 CheckMenuItemBuilder::with_id(account_menu_id(&account.id), menu_label(&label))
-                    .checked(store.active_account_id.as_deref() == Some(&account.id))
-                    .enabled(!usage_only)
+                    .checked(displayed_id == Some(account.id.as_str()))
                     .build(app)?;
             menu.append(&item)?;
         }
@@ -521,8 +519,10 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, store: &AccountsStore) -> tauri::R
     menu.append(&CheckMenuItemBuilder::with_id(FLOATING_ITEM_ID, "悬浮额度窗")
         .checked(load_app_settings().map(|settings| settings.floating_usage_enabled).unwrap_or(false))
         .build(app)?)?;
-    let interval = load_app_settings().unwrap_or_default().usage_refresh_interval_seconds;
-    let refresh_menu = Submenu::new(app, "额度自动刷新", true)?;
+    let settings = load_app_settings().unwrap_or_default();
+    let selected_id = settings.floating_usage_account_id.as_deref().filter(|id| store.accounts.iter().any(|account| account.id == *id)).or_else(|| account_for_usage_poll(store).map(|account| account.id.as_str()));
+    let interval = selected_id.and_then(|id| settings.account_usage_refresh_intervals.get(id)).copied().unwrap_or(300);
+    let refresh_menu = Submenu::new(app, if settings.floating_usage_enabled { "悬浮窗账户自动刷新" } else { "自动刷新已暂停（悬浮窗未开启）" }, settings.floating_usage_enabled && selected_id.is_some())?;
     for (seconds, label) in [(30, "每 30 秒"), (60, "每 1 分钟"), (120, "每 2 分钟"), (300, "每 5 分钟（默认）"), (600, "每 10 分钟")] {
         refresh_menu.append(&CheckMenuItemBuilder::with_id(format!("usage-refresh:{seconds}"), label).checked(interval == seconds).build(app)?)?;
     }
@@ -561,7 +561,10 @@ fn append_dock_settings_menu<R: Runtime>(app: &AppHandle<R>, menu: &Menu<R>) -> 
 fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
     let item_id = event.id().as_ref();
     if let Some(seconds) = item_id.strip_prefix("usage-refresh:").and_then(|value| value.parse::<u64>().ok()) {
-        if let Err(error) = crate::commands::set_usage_refresh_interval(app.clone(), seconds) {
+        let store = load_accounts().unwrap_or_default();
+        let selected_id = load_app_settings().ok().and_then(|settings| settings.floating_usage_account_id).filter(|id| store.accounts.iter().any(|account| account.id == *id)).or_else(|| account_for_usage_poll(&store).map(|account| account.id.clone()));
+        let Some(selected_id) = selected_id else { return; };
+        if let Err(error) = crate::commands::set_usage_refresh_interval(app.clone(), selected_id, seconds) {
             eprintln!("Failed to save usage refresh interval: {error}");
         }
         return;
@@ -592,31 +595,12 @@ fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
                 return;
             };
 
-            let app = app.clone();
-            let account_id = account_id.to_string();
-            let request_sequence = TRAY_SWITCH_SEQUENCE.fetch_add(1, Ordering::AcqRel) + 1;
-            tauri::async_runtime::spawn(async move {
-                let _tray_switch_guard = TRAY_SWITCH_LOCK.lock().await;
-                if request_sequence != TRAY_SWITCH_SEQUENCE.load(Ordering::Acquire) {
-                    return;
-                }
-
-                if let Err(error) = switch_account_by_id(&account_id).await {
-                    eprintln!("Failed to switch account from tray: {error}");
-                    refresh_menu(&app);
-                    if is_codex_running_switch_block(&error) {
-                        show_main_window(&app);
-                        let _ = app.emit(
-                            SWITCH_ACCOUNT_BLOCKED_EVENT,
-                            SwitchAccountBlockedPayload { account_id, error },
-                        );
-                    }
-                    return;
-                }
-
-                refresh_menu(&app);
-                let _ = app.emit(ACCOUNTS_CHANGED_EVENT, ());
-            });
+            if let Err(error) = crate::commands::set_floating_usage_options(
+                app.clone(), None, Some(account_id.to_string()), None, None, None,
+            ) {
+                show_main_window(app);
+                let _ = app.emit("floating-usage-error", error);
+            }
         }
     }
 }
@@ -640,13 +624,13 @@ fn refresh_menu_on_main_thread<R: Runtime>(app: &AppHandle<R>) {
         .and_then(|store| {
             let settings = load_app_settings().unwrap_or_default();
             let title = active_tray_title(
-                store.active_account_id.as_deref(),
+                settings.floating_usage_account_id.as_deref().filter(|id| store.accounts.iter().any(|account| account.id == *id)).or_else(|| account_for_usage_poll(&store).map(|account| account.id.as_str())),
                 settings.tray_display_mode,
             );
             let displayed = settings.floating_usage_account_id.as_deref()
                 .and_then(|id| store.accounts.iter().find(|account| account.id == id))
                 .or_else(|| store.active_account_id.as_deref().and_then(|id| store.accounts.iter().find(|account| account.id == id)))
-                .or_else(|| store.accounts.iter().find(|account| matches!(&account.auth_data, AuthData::Cookie { .. })));
+                .or_else(|| store.accounts.iter().find(|account| matches!(&account.auth_data, AuthData::Cookie { .. }))).or_else(|| store.accounts.first());
             let usage = TRAY_USAGE.lock().ok().and_then(|cache| displayed.and_then(|account| cache.get(&account.id).cloned()));
             let tooltip = usage_tooltip(usage.as_ref());
             let menu = build_menu(app, &store).map_err(|error| error.to_string())?;
@@ -721,7 +705,7 @@ fn refresh_tray_display<R: Runtime>(
 
 fn usage_tooltip(usage: Option<&UsageInfo>) -> String {
     let Some(usage) = usage else {
-        return "Codex Switcher\n额度尚未获取 · 每 5 分钟自动刷新".into();
+        return "Codex Switcher\n额度尚未获取".into();
     };
     let windows = usage_title(
         usage.primary_used_percent,
@@ -735,7 +719,7 @@ fn usage_tooltip(usage: Option<&UsageInfo>) -> String {
             .map(|number| if number.fract() == 0.0 { format!("{number:.0}") } else { format!("{number:.2}") })
             .unwrap_or_else(|| value.to_string())
     }).unwrap_or_else(|| "--".into());
-    let seconds = load_app_settings().unwrap_or_default().usage_refresh_interval_seconds;
+    let seconds = load_app_settings().unwrap_or_default().account_usage_refresh_intervals.get(&usage.account_id).copied().unwrap_or(300);
     let status = if usage.error.is_some() { "刷新失败，保留上次数据".into() } else { format!("每 {seconds} 秒更新额度数据") };
     format!("Codex Switcher\n剩余 {windows} · 余额 {credits}\n{status}")
 }
@@ -914,66 +898,56 @@ fn modified_at(path: &std::path::Path) -> Option<std::time::SystemTime> {
         .ok()
 }
 
-fn account_for_usage_poll(store: AccountsStore) -> Option<StoredAccount> {
-    let active_account = store
-        .active_account_id
-        .as_deref()
-        .and_then(|active_id| {
-            store.accounts.iter().find(|account| {
-                account.id == active_id && !matches!(&account.auth_data, AuthData::Cookie { .. })
-            })
-        })
-        .cloned();
-
-    active_account.or_else(|| {
-        store
-            .accounts
-            .into_iter()
-            .find(|account| matches!(&account.auth_data, AuthData::Cookie { .. }))
-    })
+fn account_for_usage_poll(store: &AccountsStore) -> Option<&StoredAccount> {
+    store.active_account_id.as_deref().and_then(|id| store.accounts.iter().find(|account| account.id == id))
+        .or_else(|| store.accounts.iter().find(|account| matches!(&account.auth_data, AuthData::Cookie { .. }))).or_else(|| store.accounts.first())
 }
 
-/// Desktop windows share one periodic refresh. Hidden windows only need the displayed account.
+/// Only the account displayed in the enabled floating window is automatically refreshed.
 fn poll_active_account_usage<R: Runtime>(app: AppHandle<R>) {
-    set_usage_refresh_interval(load_app_settings().unwrap_or_default().usage_refresh_interval_seconds);
     std::thread::spawn(move || {
-      let mut interval = USAGE_REFRESH_SECONDS.load(Ordering::Acquire);
-      let mut last_refresh = Instant::now();
+      let accounts_path = get_accounts_file().ok();
+      let settings_path = crate::auth::get_settings_file().ok();
+      let mut accounts_modified = None;
+      let mut settings_modified = None;
+      let mut store = AccountsStore::default();
+      let mut settings = crate::types::AppSettings::default();
       loop {
-        // Only the shared scheduler wakes here; changing the interval starts a new countdown.
         std::thread::sleep(Duration::from_secs(1));
-        let current = USAGE_REFRESH_SECONDS.load(Ordering::Acquire);
-        if current != interval {
-            interval = current;
-            last_refresh = Instant::now();
+        let Ok(_refresh_guard) = USAGE_REFRESH_LOCK.try_lock() else { continue; };
+        let modified = accounts_path.as_deref().and_then(modified_at);
+        if modified != accounts_modified {
+            let Ok(updated) = load_accounts() else { continue; };
+            store = updated;
+            accounts_modified = modified;
         }
-        if last_refresh.elapsed() < Duration::from_secs(interval) { continue; }
-        last_refresh = Instant::now();
-        let Ok(store) = load_accounts() else {
-            continue;
-        };
-        let main_window_visible = app
-            .get_webview_window("main")
-            .and_then(|window| window.is_visible().ok())
-            .unwrap_or(false);
-        if main_window_visible {
-            let usages = tauri::async_runtime::block_on(refresh_all_usage(&store.accounts));
-            ingest_usage(&app, usages);
-        } else if let Some(account) = load_app_settings().ok()
-            .and_then(|settings| settings.floating_usage_account_id)
-            .and_then(|id| store.accounts.iter().find(|account| account.id == id).cloned())
-            .or_else(|| account_for_usage_poll(store))
-        {
-            match tauri::async_runtime::block_on(get_account_usage(&account)) {
-                // Keep the last known title on transient fetch errors.
-                Ok(usage) => ingest_usage(&app, vec![usage]),
-                Err(error) => ingest_usage(&app, vec![UsageInfo::error(account.id.clone(), error.to_string())]),
-            }
+        let modified = settings_path.as_deref().and_then(modified_at);
+        if modified != settings_modified {
+            let Ok(updated) = load_app_settings() else { continue; };
+            settings = updated;
+            settings_modified = modified;
+        }
+        if let Ok(mut last) = LAST_USAGE_REFRESH.lock() { last.retain(|id, _| store.accounts.iter().any(|account| &account.id == id)); }
+        let displayed = if settings.floating_usage_enabled {
+            settings.floating_usage_account_id.as_deref().filter(|id| store.accounts.iter().any(|account| account.id == *id))
+                .or_else(|| account_for_usage_poll(&store).map(|account| account.id.as_str()))
+        } else { None };
+        for account in &store.accounts {
+            if displayed != Some(account.id.as_str()) { continue; }
+            if matches!(&account.auth_data, AuthData::ApiKey { .. }) { continue; }
+            let interval = settings.account_usage_refresh_intervals.get(&account.id).copied().unwrap_or(300);
+            let due = LAST_USAGE_REFRESH.lock().map(|mut last| last.entry(account.id.clone()).or_insert_with(Instant::now).elapsed() >= Duration::from_secs(interval)).unwrap_or(false);
+            if !due { continue; }
+            crate::api::usage::write_usage_log(&format!("自动刷新开始 account={} name={} interval={interval}s", account.id, account.name));
+            let usage = match tauri::async_runtime::block_on(get_account_usage(&account)) {
+                Ok(usage) => usage,
+                Err(error) => UsageInfo::error(account.id.clone(), format!("{error:#}")),
+            };
+            ingest_usage(&app, vec![usage]);
         }
       }
     });
 }
-
 /// Keep subscription dates current even when the main webview is hidden or
 /// suspended. Live metadata stays in memory and is announced to the webviews.
 fn poll_account_metadata<R: Runtime>(app: AppHandle<R>) {
@@ -1095,7 +1069,7 @@ mod tests {
             ..AccountsStore::default()
         };
 
-        let selected = account_for_usage_poll(store).unwrap();
+        let selected = account_for_usage_poll(&store).unwrap();
 
         assert_eq!(selected.id, active_id);
     }
@@ -1115,7 +1089,7 @@ mod tests {
             ..AccountsStore::default()
         };
 
-        let selected = account_for_usage_poll(store).unwrap();
+        let selected = account_for_usage_poll(&store).unwrap();
 
         assert_eq!(selected.id, cookie_id);
     }

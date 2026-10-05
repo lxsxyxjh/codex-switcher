@@ -2,13 +2,12 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use futures::{stream, StreamExt};
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, COOKIE, USER_AGENT},
     StatusCode,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::{
     collections::HashMap,
     sync::{LazyLock, Mutex},
@@ -24,8 +23,6 @@ const CHATGPT_BACKEND_API: &str = "https://chatgpt.com/backend-api";
 const CHATGPT_WEB_SESSION_API: &str = "https://chatgpt.com/api/auth/session";
 const CHATGPT_ACCOUNTS_CHECK_API: &str =
     "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27";
-const CHATGPT_CODEX_RESPONSES_API: &str = "https://chatgpt.com/backend-api/codex/responses";
-const OPENAI_API: &str = "https://api.openai.com/v1";
 const CHATGPT_ORIGIN: &str = "https://chatgpt.com";
 
 /// A browser-like User-Agent to avoid Cloudflare bot detection.
@@ -54,6 +51,58 @@ struct CachedCookieSession {
 
 static COOKIE_SESSION_CACHE: LazyLock<Mutex<HashMap<String, CachedCookieSession>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static USAGE_LOG_LOCK: Mutex<()> = Mutex::new(());
+
+pub fn write_usage_log(message: &str) {
+    use std::io::Write;
+    let Ok(_guard) = USAGE_LOG_LOCK.lock() else { return; };
+    let Ok(directory) = crate::auth::get_config_dir() else { return; };
+    if std::fs::create_dir_all(&directory).is_err() { return; }
+    let path = directory.join("usage.log");
+    if std::fs::metadata(&path).map(|metadata| metadata.len() > 5 * 1024 * 1024).unwrap_or(false) {
+        let backup = directory.join("usage.previous.log");
+        if backup.exists() && std::fs::remove_file(&backup).is_err() { return; }
+        if std::fs::rename(&path, backup).is_err() { return; }
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let line = message.replace(['\r', '\n'], " ");
+        let _ = writeln!(file, "{} {line}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"));
+    }
+}
+
+pub(crate) async fn log_http_failure(account_id: &str, response: reqwest::Response) -> String {
+    let status = response.status();
+    let header = |name: &str| response.headers().get(name).and_then(|value| value.to_str().ok()).unwrap_or("--").to_string();
+    let request_id = header("x-request-id");
+    let ray = header("cf-ray");
+    let retry_after = header("retry-after");
+    let content_type = header("content-type");
+    let endpoint = response.url().path().to_string();
+    let body = response.text().await;
+    // Only structured error codes are recorded; response bodies may contain credentials or account data.
+    let details = match body {
+        Ok(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(value) => {
+                let error = value.get("error").unwrap_or(&value);
+                format!("error_code={} error_type={} message={}", error.get("code").and_then(Value::as_str).unwrap_or("--"), error.get("type").and_then(Value::as_str).unwrap_or("--"), diagnostic_text(error.get("message").or_else(|| value.get("detail")).and_then(Value::as_str).unwrap_or("--")))
+            }
+            Err(_) => {
+                let lower = text.to_lowercase();
+                let title = lower.find("<title>").and_then(|start| lower[start + 7..].find("</title>").map(|end| &text[start + 7..start + 7 + end])).unwrap_or("--");
+                format!("response={} title={} bytes={} blocked={} challenge={}", "non-JSON", diagnostic_text(title), text.len(), lower.contains("blocked") || lower.contains("access denied"), lower.contains("just a moment") || lower.contains("cf-chl-"))
+            },
+        },
+        Err(error) => format!("response_read_error={error}"),
+    };
+    write_usage_log(&format!("HTTP失败 account={account_id} endpoint={endpoint} status={status} request_id={request_id} cf_ray={ray} retry_after={retry_after} content_type={content_type} {details}"));
+    format!("API error: {status}")
+}
+
+fn diagnostic_text(text: &str) -> String {
+    text.split_whitespace().take(60).map(|part| {
+        if part.len() > 100 || part.contains("eyJ") || part.contains("access_token") || part.contains("refresh_token") || part.contains("session-token") { "[redacted]" } else { part }
+    }).collect::<Vec<_>>().join(" ").chars().take(600).collect()
+}
 
 #[derive(Debug, Clone)]
 pub struct ChatGptAccountMetadata {
@@ -89,7 +138,16 @@ struct AccountsCheckEntitlement {
 
 /// Get usage information for an account
 pub async fn get_account_usage(account: &StoredAccount) -> Result<UsageInfo> {
-    match &account.auth_data {
+    let started = std::time::Instant::now();
+    let method = match &account.auth_data { AuthData::Cookie { .. } => "Cookie", AuthData::ChatGPT { .. } => "Codex", AuthData::ApiKey { .. } => "API key" };
+    let proxies = ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"].into_iter().filter_map(|key| {
+        std::env::var(key).ok().map(|value| {
+            let endpoint = reqwest::Url::parse(&value).ok().map(|url| format!("{}://{}:{}", url.scheme(), url.host_str().unwrap_or("--"), url.port_or_known_default().unwrap_or(0))).unwrap_or_else(|| "已配置，格式无法解析".to_string());
+            format!("{key}={endpoint}")
+        })
+    }).collect::<Vec<_>>().join(" ");
+    write_usage_log(&format!("请求开始 account={} name={} method={method} proxy_config=自动读取环境变量及系统代理（不是实际连接路径证明） {proxies} no_proxy_configured={}", account.id, account.name, std::env::var_os("NO_PROXY").or_else(|| std::env::var_os("no_proxy")).is_some()));
+    let result = match &account.auth_data {
         AuthData::ApiKey { .. } => Ok(UsageInfo {
             account_id: account.id.clone(),
             plan_type: Some("api_key".to_string()),
@@ -106,18 +164,10 @@ pub async fn get_account_usage(account: &StoredAccount) -> Result<UsageInfo> {
         }),
         AuthData::ChatGPT { .. } => get_usage_with_chatgpt_auth(account).await,
         AuthData::Cookie { .. } => get_usage_with_cookie_auth(account).await,
-    }
-}
-
-/// Send a minimal authenticated request to warm up account traffic paths.
-pub async fn warmup_account(account: &StoredAccount) -> Result<()> {
-    match &account.auth_data {
-        AuthData::ApiKey { key } => warmup_with_api_key(key).await,
-        AuthData::ChatGPT { .. } => warmup_with_chatgpt_auth(account).await,
-        AuthData::Cookie { .. } => {
-            anyhow::bail!("Cookie accounts can read usage but cannot send Codex warm-up requests")
-        }
-    }
+    };
+    let error = match &result { Ok(usage) => usage.error.clone(), Err(error) => Some(diagnostic_text(&format!("{error:#}"))) };
+    write_usage_log(&format!("刷新结束 account={} method={method} duration_ms={} result={}", account.id, started.elapsed().as_millis(), error.as_deref().unwrap_or("成功")));
+    result
 }
 
 pub async fn fetch_chatgpt_account_metadata(
@@ -130,15 +180,8 @@ pub async fn fetch_chatgpt_account_metadata(
 
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        if status == StatusCode::FORBIDDEN {
-            anyhow::bail!(
-                "Accounts check API returned 403 Forbidden. \
-                 The request was likely blocked by Cloudflare bot detection. \
-                 This is a transient network issue — please try again in a moment."
-            );
-        }
-        anyhow::bail!("Accounts check API error: {status} - {body}");
+        let error = log_http_failure(&account.id, response).await;
+        anyhow::bail!("Accounts check failed: {error}");
     }
 
     let payload: AccountsCheckResponse = response
@@ -219,6 +262,7 @@ pub fn normalize_chatgpt_cookie(input: &str) -> Result<String> {
 
 pub async fn fetch_chatgpt_cookie_session(cookie: &str) -> Result<ChatGptCookieSession> {
     let cookie = normalize_chatgpt_cookie(cookie)?;
+    write_usage_log("HTTP请求 GET /api/auth/session");
     let response = reqwest::Client::new()
         .get(CHATGPT_WEB_SESSION_API)
         .timeout(std::time::Duration::from_secs(30))
@@ -230,12 +274,11 @@ pub async fn fetch_chatgpt_cookie_session(cookie: &str) -> Result<ChatGptCookieS
         .send()
         .await
         .context("Failed to check the ChatGPT browser session")?;
+    write_usage_log(&format!("HTTP响应 GET /api/auth/session status={}", response.status()));
 
     if !response.status().is_success() {
-        anyhow::bail!(
-            "ChatGPT rejected the Cookie header with status {}",
-            response.status()
-        );
+        let error = log_http_failure("Cookie session", response).await;
+        anyhow::bail!("ChatGPT browser session failed: {error}");
     }
 
     let payload: Value = response
@@ -361,9 +404,10 @@ async fn parse_usage_response(
     let status = response.status();
 
     if !status.is_success() {
+        let error = log_http_failure(account_id, response).await;
         return Ok(UsageInfo::error(
             account_id.to_string(),
-            format!("API error: {status}"),
+            error,
         ));
     }
 
@@ -379,98 +423,6 @@ async fn parse_usage_response(
     println!("[Usage] Refreshed account: {account_name}");
 
     Ok(usage)
-}
-
-async fn warmup_with_chatgpt_auth(account: &StoredAccount) -> Result<()> {
-    let fresh_account = ensure_chatgpt_tokens_fresh(account).await?;
-    let (access_token, chatgpt_account_id) = extract_chatgpt_auth(&fresh_account)?;
-
-    let mut response = send_chatgpt_warmup_request(access_token, chatgpt_account_id, true).await?;
-
-    // Only refresh tokens on 401 (genuinely expired). A 403 is a Cloudflare
-    // challenge and does not indicate stale tokens — refreshing on 403 burns
-    // the refresh token and causes a refresh_token_reused error on the next call.
-    if response.status() == StatusCode::UNAUTHORIZED {
-        println!(
-            "[Warmup] Unauthorized for account {}, refreshing token and retrying once",
-            fresh_account.name
-        );
-        let refreshed_account = refresh_chatgpt_tokens(&fresh_account).await?;
-        let (retry_token, retry_account_id) = extract_chatgpt_auth(&refreshed_account)?;
-        response = send_chatgpt_warmup_request(retry_token, retry_account_id, true).await?;
-    }
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        println!("[Warmup] ChatGPT warm-up error response: {body}");
-        anyhow::bail!("ChatGPT warm-up failed with status {status}");
-    }
-
-    let body = response.text().await.unwrap_or_default();
-    log_warmup_response("ChatGPT", &body, true);
-
-    Ok(())
-}
-
-async fn warmup_with_api_key(api_key: &str) -> Result<()> {
-    let client = reqwest::Client::new();
-    let payload = build_warmup_payload(false, true);
-    let response = client
-        .post(format!("{OPENAI_API}/responses"))
-        .header(USER_AGENT, BROWSER_USER_AGENT)
-        .header(AUTHORIZATION, format!("Bearer {api_key}"))
-        .json(&payload)
-        .send()
-        .await
-        .context("Failed to send API key warm-up request")?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        println!("[Warmup] API key warm-up error response: {body}");
-        anyhow::bail!("API key warm-up failed with status {status}");
-    }
-
-    let body = response.text().await.unwrap_or_default();
-    log_warmup_response("API key", &body, false);
-
-    Ok(())
-}
-
-fn build_warmup_payload(stream: bool, include_max_output_tokens: bool) -> serde_json::Value {
-    let mut payload = json!({
-        "model": "gpt-5.6-luna",
-        "instructions": "You are Codex.",
-        "input": [
-            {
-                "type": "message",
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": "Thanks"
-                    }
-                ]
-            }
-        ],
-        "tools": [],
-        "tool_choice": "auto",
-        "parallel_tool_calls": false,
-        "reasoning": {
-            "effort": "low"
-        },
-        "store": false,
-        "stream": stream
-    });
-
-    if include_max_output_tokens {
-        if let Some(obj) = payload.as_object_mut() {
-            obj.insert("max_output_tokens".to_string(), json!(1));
-        }
-    }
-
-    payload
 }
 
 fn build_chatgpt_headers(
@@ -556,115 +508,16 @@ async fn send_chatgpt_get_request(
     let client = reqwest::Client::new();
     let headers = build_chatgpt_headers(access_token, chatgpt_account_id)?;
 
-    client
+    write_usage_log(&format!("HTTP请求 GET {url}"));
+    let response = client
         .get(url)
         .timeout(std::time::Duration::from_secs(30))
         .headers(headers)
         .send()
         .await
-        .with_context(|| format!("Failed to send GET request to {url}"))
-}
-
-async fn send_chatgpt_warmup_request(
-    access_token: &str,
-    chatgpt_account_id: Option<&str>,
-    stream: bool,
-) -> Result<reqwest::Response> {
-    let client = reqwest::Client::new();
-    let headers = build_chatgpt_headers(access_token, chatgpt_account_id)?;
-    let payload = build_warmup_payload(stream, false);
-
-    client
-        .post(CHATGPT_CODEX_RESPONSES_API)
-        .headers(headers)
-        .json(&payload)
-        .send()
-        .await
-        .context("Failed to send ChatGPT warm-up request")
-}
-
-fn log_warmup_response(source: &str, body: &str, is_sse: bool) {
-    if body.trim().is_empty() {
-        println!("[Warmup] {source} warm-up response was empty");
-        return;
-    }
-
-    let preview = truncate_text(body, 300);
-    println!("[Warmup] {source} warm-up response preview: {preview}");
-
-    let extracted = if is_sse {
-        extract_text_from_sse(body)
-    } else {
-        extract_text_from_json(body)
-    };
-
-    if let Some(message) = extracted {
-        let message_preview = truncate_text(&message, 200);
-        println!("[Warmup] {source} warm-up message: {message_preview}");
-    }
-}
-
-fn truncate_text(text: &str, max_len: usize) -> String {
-    if text.len() <= max_len {
-        return text.to_string();
-    }
-    let mut out = text[..max_len].to_string();
-    out.push_str("...");
-    out
-}
-
-fn extract_text_from_sse(body: &str) -> Option<String> {
-    let mut last_text: Option<String> = None;
-    for line in body.lines() {
-        let line = line.trim();
-        if !line.starts_with("data:") {
-            continue;
-        }
-        let data = line.trim_start_matches("data:").trim();
-        if data.is_empty() || data == "[DONE]" {
-            continue;
-        }
-        if let Ok(value) = serde_json::from_str::<Value>(data) {
-            if let Some(text) = extract_last_text_from_value(&value) {
-                last_text = Some(text);
-            }
-        }
-    }
-    last_text.filter(|text| !text.trim().is_empty())
-}
-
-fn extract_text_from_json(body: &str) -> Option<String> {
-    let value = serde_json::from_str::<Value>(body).ok()?;
-    extract_last_text_from_value(&value)
-}
-
-fn extract_last_text_from_value(value: &Value) -> Option<String> {
-    let mut last: Option<String> = None;
-    collect_last_text(value, &mut last);
-    last
-}
-
-fn collect_last_text(value: &Value, last: &mut Option<String>) {
-    match value {
-        Value::Object(map) => {
-            for (key, val) in map {
-                if matches!(key.as_str(), "text" | "delta" | "output_text") {
-                    if let Value::String(text) = val {
-                        if !text.is_empty() {
-                            *last = Some(text.clone());
-                        }
-                    }
-                }
-                collect_last_text(val, last);
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_last_text(item, last);
-            }
-        }
-        _ => {}
-    }
+        .with_context(|| format!("Failed to send GET request to {url}"))?;
+    write_usage_log(&format!("HTTP响应 GET {url} status={}", response.status()));
+    Ok(response)
 }
 
 /// Convert API response to UsageInfo
@@ -726,26 +579,6 @@ fn is_weekly_window(window: &RateLimitWindow) -> bool {
 
 fn extract_credits(credits: Option<CreditStatusDetails>) -> Option<CreditStatusDetails> {
     credits
-}
-
-/// Refresh all account usage
-pub async fn refresh_all_usage(accounts: &[StoredAccount]) -> Vec<UsageInfo> {
-    let concurrency = accounts.len().min(10).max(1);
-    let results: Vec<UsageInfo> = stream::iter(accounts.iter().cloned())
-        .map(|account| async move {
-            match get_account_usage(&account).await {
-                Ok(info) => info,
-                Err(e) => {
-                    println!("[Usage] Error for {}: {}", account.name, e);
-                    UsageInfo::error(account.id.clone(), e.to_string())
-                }
-            }
-        })
-        .buffer_unordered(concurrency)
-        .collect()
-        .await;
-
-    results
 }
 
 #[cfg(test)]

@@ -16,7 +16,7 @@ English | [简体中文](README.zh-CN.md) | [Download Windows exe](https://githu
 | Multiple Codex accounts | View several accounts in the main window and choose which account appears in the floating widget |
 | Desktop widget and system tray | An always-on-top, draggable quota overlay and a tray tooltip with the same usage data |
 
-Only quota periods returned for the account are shown. Missing periods are omitted; an exhausted quota displays **0%**. Credits are separate from manual reset credits, token counts, and API billing.
+Only quota periods returned for the account are shown. Missing periods are omitted; an exhausted quota displays **0%**. Credits show the remaining Codex usage balance, separate from token counts and API billing.
 
 ## Why use this Windows quota monitor?
 
@@ -24,14 +24,14 @@ Only quota periods returned for the account are shown. Missing periods are omitt
 - Use a compact horizontal bar or vertical layout, with edge hiding and 50%–200% scaling.
 - Check quota through a Cookie input box, or keep using your existing Codex login.
 - Choose the displayed account without changing the account signed into Codex.
-- Fetch the latest usage automatically every 5 minutes by default; choose 30 seconds, 1, 2, 5, or 10 minutes in Settings or either context menu.
+- Only the account shown in the enabled floating widget refreshes automatically. Its default interval is 5 minutes; choose 30 seconds, 1, 2, 5, or 10 minutes on its account card or in the widget context menu. Other accounts refresh manually. Closing the widget pauses automatic usage refresh.
 - Refresh manually from the widget. The main window, floating widget, and tray share the same quota updates; failed requests retain the last successful values.
 - Restore the widget's position and preferences after restarting. Closing the main window keeps the app in the tray.
 
 ## Download and start
 
 1. Download `codex-switcher.exe` from [Releases](https://github.com/lxsxyxjh/codex-switcher/releases), place it in a permanent folder, and open it.
-2. Select **账户 → 添加账户** (Account → Add account).
+2. Select **添加账户** (Account → Add account).
 3. Enable **悬浮额度窗** (Floating quota widget) in Settings or the tray context menu.
 4. Drag the widget to your preferred location. Right-click it for account, layout, scaling, and refresh settings.
 
@@ -39,15 +39,17 @@ Requires Windows x64 and [Microsoft Edge WebView2 Runtime](https://developer.mic
 
 ## Account methods
 
-| Method | Quota and Credits | Switch Codex login / warm up |
-| --- | --- | --- |
-| Import Codex `auth.json` | Yes, when returned for the account | Yes |
-| ChatGPT browser login | Yes, when returned for the account | Yes |
-| Paste ChatGPT Cookie | Yes, when returned for the account | No; quota viewing only |
+| Method | Quota and Credits |
+| --- | --- |
+| Import Codex `auth.json` | Yes, when returned for the account |
+| ChatGPT browser login | Yes, when returned for the account |
+| Paste ChatGPT Cookie | Yes, when returned for the account |
+
+This app only monitors usage. It does not switch Codex logins, write Codex login files, or send warm-up requests.
 
 The file picker starts at `%USERPROFILE%\.codex\auth.json`, or under `CODEX_HOME` if configured. Each Cookie account can have its own credentials. Cookie and Codex login records for the same account remain separate; adding the same account through the same method updates its existing record.
 
-Use **账户 → 导出 / 导入** to back up or restore accounts. Left-click the tray icon to reopen the main window; **退出程序** (Quit) in the tray context menu exits the whole app.
+Use **导出 / 导入** to back up or restore accounts. Left-click the tray icon to reopen the main window; **退出程序** (Quit) in the tray context menu exits the whole app.
 
 ## Common questions
 
@@ -65,7 +67,7 @@ Yes. Paste the ChatGPT Cookie into the Cookie input box when adding an account. 
 
 ### Does refreshing consume quota?
 
-Refreshing fetches usage data; it does not send a Codex generation request. **Warm up** is a separate, optional action that sends a small Codex request and may consume quota.
+Refreshing only fetches usage data; it does not send a Codex generation request.
 
 ## Build a Windows exe
 
@@ -88,6 +90,6 @@ GitHub Actions can also build the exe: push a version tag matching `package.json
 
 ## Original project and scope
 
-Based on [Codex Switcher](https://github.com/Lampese/codex-switcher), created by [Lampese](https://github.com/Lampese) and its contributors. Account management, login, Codex switching, usage requests, and the Tauri foundation come from the original project. This fork adds the Windows floating quota widget, Cookie account input, synchronized Credits display, and simplified controls.
+Based on [Codex Switcher](https://github.com/Lampese/codex-switcher), created by [Lampese](https://github.com/Lampese) and its contributors. Account storage, login, usage requests, and the Tauri foundation come from the original project. This fork focuses on quota monitoring, adds the Windows floating quota widget, Cookie input and synchronized Credits display, and removes login switching, warm-up and process controls.
 
 This is a community project, not an official OpenAI application. These changes target Windows; this fork's macOS and Linux builds have not been validated.

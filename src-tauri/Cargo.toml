@@ -1,7 +1,7 @@
 [package]
 name = "codex-switcher"
 version = "0.2.20"
-description = "A multi-account manager for Codex CLI"
+description = "A Windows Codex quota and Credits monitor"
 authors = ["lampese"]
 edition = "2021"
 default-run = "codex-switcher"
@@ -27,21 +27,15 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 dirs = "6"
 tiny_http = "0.12"
-webbrowser = "1"
 base64 = "0.22"
 sha2 = "0.10"
 rand = "0.9"
-thiserror = "2"
 anyhow = "1"
 urlencoding = "2"
-futures = "0.3"
 url = "2"
 flate2 = "1"
 chacha20poly1305 = "0.10"
 pbkdf2 = "0.12"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-plist = "1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 tauri-plugin-single-instance = "2"

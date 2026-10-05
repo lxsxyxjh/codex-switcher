@@ -1,10 +1,5 @@
 //! Window and tray popup management commands.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-
-#[cfg(target_os = "macos")]
-use std::time::Duration;
-
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::{
@@ -15,18 +10,6 @@ use crate::{
 /// Label of the borderless tray popup window.
 pub const TRAY_WINDOW: &str = "tray";
 pub const FLOATING_USAGE_WINDOW: &str = "floating-usage";
-pub const CLOSE_BEHAVIOR_REQUESTED_EVENT: &str = "close-behavior-requested";
-
-#[cfg(target_os = "macos")]
-static CLOSE_BEHAVIOR_PROMPT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-static CLOSE_BEHAVIOR_PROMPT_ACKED: AtomicU64 = AtomicU64::new(0);
-
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloseBehaviorRequestedPayload {
-    pub request_id: u64,
-}
-
 #[tauri::command]
 pub fn get_cached_usage() -> Vec<UsageInfo> {
     #[cfg(desktop)]
@@ -109,16 +92,18 @@ pub fn get_floating_usage_options() -> Result<AppSettings, String> {
 }
 
 #[tauri::command]
-pub fn set_usage_refresh_interval(app: AppHandle, seconds: u64) -> Result<(), String> {
+pub fn set_usage_refresh_interval(app: AppHandle, account_id: String, seconds: u64) -> Result<(), String> {
     if ![30, 60, 120, 300, 600].contains(&seconds) {
         return Err("请选择有效的自动刷新间隔".into());
     }
     let mut settings = load_app_settings().map_err(|error| error.to_string())?;
-    settings.usage_refresh_interval_seconds = seconds;
+    if !load_accounts().map_err(|error| error.to_string())?.accounts.iter().any(|account| account.id == account_id) { return Err("账户不存在".into()); }
+    if seconds == 300 { settings.account_usage_refresh_intervals.remove(&account_id); }
+    else { settings.account_usage_refresh_intervals.insert(account_id.clone(), seconds); }
     save_app_settings(&settings).map_err(|error| error.to_string())?;
     #[cfg(desktop)]
     {
-        crate::tray::set_usage_refresh_interval(seconds);
+        crate::tray::reset_usage_refresh_timer(&account_id);
         crate::tray::refresh(&app);
     }
     let _ = app.emit("app-settings-changed", ());
@@ -133,6 +118,17 @@ pub fn set_floating_usage_options(
     show_used: Option<bool>,
     vertical: Option<bool>,
     edge_hide: Option<bool>,
+) -> Result<AppSettings, String> {
+    let settings = update_floating_usage_options(scale, account_id, show_used, vertical, edge_hide)?;
+    let _ = app.emit("app-settings-changed", ());
+    #[cfg(desktop)]
+    crate::tray::refresh(&app);
+    Ok(settings)
+}
+
+pub fn update_floating_usage_options(
+    scale: Option<u16>, account_id: Option<String>, show_used: Option<bool>,
+    vertical: Option<bool>, edge_hide: Option<bool>,
 ) -> Result<AppSettings, String> {
     let mut settings = load_app_settings().map_err(|error| error.to_string())?;
     if let Some(scale) = scale {
@@ -158,9 +154,6 @@ pub fn set_floating_usage_options(
         if !edge_hide { settings.floating_usage_edge = None; }
     }
     save_app_settings(&settings).map_err(|error| error.to_string())?;
-    let _ = app.emit("app-settings-changed", ());
-    #[cfg(desktop)]
-    crate::tray::refresh(&app);
     Ok(settings)
 }
 
@@ -307,30 +300,6 @@ pub fn hide_main_window<R: Runtime>(app: &AppHandle<R>) {
     let _ = app.hide();
 }
 
-#[cfg(target_os = "macos")]
-pub fn next_close_behavior_prompt_payload() -> CloseBehaviorRequestedPayload {
-    CloseBehaviorRequestedPayload {
-        request_id: CLOSE_BEHAVIOR_PROMPT_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1,
-    }
-}
-
-#[cfg(target_os = "macos")]
-pub fn schedule_close_behavior_prompt_fallback<R: Runtime>(app: AppHandle<R>, request_id: u64) {
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(750));
-        if CLOSE_BEHAVIOR_PROMPT_ACKED.load(Ordering::SeqCst) >= request_id {
-            return;
-        }
-
-        let app_handle = app.clone();
-        if let Err(error) = app.run_on_main_thread(move || {
-            hide_main_window(&app_handle);
-        }) {
-            eprintln!("Failed to schedule close prompt fallback: {error}");
-        }
-    });
-}
-
 /// Bring the main window to the foreground and hide the tray popup.
 pub fn restore_main_window<R: Runtime>(app: &AppHandle<R>) {
     if let Some(tray) = app.get_webview_window(TRAY_WINDOW) {
@@ -412,48 +381,5 @@ pub fn set_dock_display_mode(
     {
         let _ = (app, mode);
         Ok(None)
-    }
-}
-
-#[tauri::command]
-pub fn complete_close_behavior(
-    app: AppHandle,
-    mode: DockDisplayMode,
-    dont_ask_again: bool,
-) -> Result<Option<DockDisplayMode>, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut settings = crate::app_menu::set_dock_display_mode(&app, mode)
-            .map_err(|error| error.to_string())?;
-        if dont_ask_again {
-            settings.close_behavior_prompt_enabled = false;
-            save_app_settings(&settings).map_err(|error| error.to_string())?;
-        }
-        hide_main_window(&app);
-        Ok(Some(settings.dock_display_mode))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (mode, dont_ask_again);
-        hide_main_window(&app);
-        Ok(None)
-    }
-}
-
-#[tauri::command]
-pub fn ack_close_behavior_prompt(request_id: u64) {
-    CLOSE_BEHAVIOR_PROMPT_ACKED.fetch_max(request_id, Ordering::SeqCst);
-}
-
-pub fn should_prompt_for_close_behavior() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        load_app_settings()
-            .unwrap_or_default()
-            .close_behavior_prompt_enabled
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        false
     }
 }

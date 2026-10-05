@@ -33,10 +33,6 @@ pub enum DockDisplayMode {
     MenuBarOnly,
 }
 
-fn default_close_behavior_prompt_enabled() -> bool {
-    true
-}
-
 fn default_floating_usage_scale() -> u16 {
     100
 }
@@ -44,11 +40,9 @@ fn default_floating_usage_scale() -> u16 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
-    pub usage_refresh_interval_seconds: u64,
+    pub account_usage_refresh_intervals: std::collections::HashMap<String, u64>,
     pub tray_display_mode: TrayDisplayMode,
     pub dock_display_mode: DockDisplayMode,
-    #[serde(default = "default_close_behavior_prompt_enabled")]
-    pub close_behavior_prompt_enabled: bool,
     #[serde(default)]
     pub floating_usage_enabled: bool,
     #[serde(default)]
@@ -67,10 +61,9 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            usage_refresh_interval_seconds: 300,
+            account_usage_refresh_intervals: std::collections::HashMap::new(),
             tray_display_mode: TrayDisplayMode::default(),
             dock_display_mode: DockDisplayMode::default(),
-            close_behavior_prompt_enabled: true,
             floating_usage_enabled: false,
             floating_usage_position: None,
             floating_usage_scale: 100,
@@ -701,17 +694,6 @@ impl UsageInfo {
     }
 }
 
-/// Warm-up execution summary across accounts
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WarmupSummary {
-    /// Number of accounts that were targeted
-    pub total_accounts: usize,
-    /// Number of accounts whose warm-up request succeeded
-    pub warmed_accounts: usize,
-    /// Account IDs whose warm-up request failed
-    pub failed_account_ids: Vec<String>,
-}
-
 /// Import summary for account config import operations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportAccountsSummary {
@@ -853,6 +835,5 @@ mod tests {
 
         assert_eq!(settings.tray_display_mode, TrayDisplayMode::ActiveUsageText);
         assert_eq!(settings.dock_display_mode, DockDisplayMode::ShowInDock);
-        assert!(settings.close_behavior_prompt_enabled);
     }
 }

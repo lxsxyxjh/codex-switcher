@@ -6,7 +6,7 @@ use chrono::Utc;
 use tokio::time::{sleep, Duration};
 
 use super::{
-    load_accounts, read_current_auth, save_accounts, switch_to_account, sync_active_account_tokens,
+    load_accounts, read_current_auth, save_accounts, sync_active_account_tokens,
     update_account_chatgpt_tokens, AUTH_OPERATION_LOCK,
 };
 use crate::types::{
@@ -84,11 +84,7 @@ pub async fn refresh_chatgpt_tokens(account: &StoredAccount) -> Result<StoredAcc
 }
 
 async fn refresh_chatgpt_tokens_locked(account: &StoredAccount) -> Result<StoredAccount> {
-    let (current, is_active) = load_account_reconciling_live_auth(&account.id)?;
-
-    if is_active && crate::commands::process::ensure_codex_not_running().is_err() {
-        return Ok(current);
-    }
+    let (current, _) = load_account_reconciling_live_auth(&account.id)?;
 
     let (current_id_token, current_refresh_token, current_account_id) = match &current.auth_data {
         AuthData::ChatGPT {
@@ -133,14 +129,6 @@ async fn refresh_chatgpt_tokens_locked(account: &StoredAccount) -> Result<Stored
         return Err(error);
     }
 
-    // Re-read active state after the network request before touching auth.json.
-    let is_active = load_accounts()?.active_account_id.as_deref() == Some(account.id.as_str());
-    if is_active {
-        if let Err(err) = switch_to_account(&updated) {
-            println!("[Auth] Failed to sync active auth.json after token refresh: {err}");
-        }
-    }
-
     Ok(updated)
 }
 
@@ -174,35 +162,6 @@ fn load_account_reconciling_live_auth(account_id: &str) -> Result<(StoredAccount
         .find(|stored| stored.id == account_id)
         .context("Account not found")?;
     Ok((account, is_active))
-}
-
-/// Build a new ChatGPT account from a refresh token.
-/// This is used by slim import to recreate full credentials.
-pub async fn create_chatgpt_account_from_refresh_token(
-    account_name: String,
-    refresh_token: String,
-) -> Result<StoredAccount> {
-    if refresh_token.trim().is_empty() {
-        anyhow::bail!("Missing refresh token for account {account_name}");
-    }
-
-    let refreshed = refresh_tokens_with_refresh_token(&refresh_token).await?;
-    let id_token = refreshed
-        .id_token
-        .context("Refresh response did not include id_token")?;
-    let next_refresh_token = refreshed.refresh_token.unwrap_or(refresh_token);
-    let claims = parse_chatgpt_id_token_claims(&id_token);
-
-    Ok(StoredAccount::new_chatgpt(
-        account_name,
-        claims.email,
-        claims.plan_type,
-        claims.subscription_expires_at,
-        id_token,
-        refreshed.access_token,
-        next_refresh_token,
-        claims.account_id,
-    ))
 }
 
 fn chatgpt_tokens_need_refresh(account: &StoredAccount) -> bool {
@@ -287,6 +246,7 @@ fn parse_jwt_exp(token: &str) -> Option<i64> {
 }
 
 async fn refresh_tokens_with_refresh_token(refresh_token: &str) -> Result<RefreshTokenResponse> {
+    crate::api::usage::write_usage_log("登录凭证刷新开始 endpoint=/oauth/token");
     let client = reqwest::Client::new();
     let body = format!(
         "grant_type=refresh_token&refresh_token={}&client_id={}",
@@ -298,6 +258,7 @@ async fn refresh_tokens_with_refresh_token(refresh_token: &str) -> Result<Refres
     let mut response = None;
 
     for attempt in 1..=3u8 {
+        crate::api::usage::write_usage_log(&format!("HTTP请求 POST /oauth/token attempt={attempt}"));
         match client
             .post(format!("{DEFAULT_ISSUER}/oauth/token"))
             .timeout(Duration::from_secs(10))
@@ -328,9 +289,8 @@ async fn refresh_tokens_with_refresh_token(refresh_token: &str) -> Result<Refres
     };
 
     if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("Token refresh failed: {status} - {body}");
+        let error = crate::api::usage::log_http_failure("登录凭证刷新", response).await;
+        anyhow::bail!("Token refresh failed: {error}");
     }
 
     response

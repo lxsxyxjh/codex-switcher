@@ -16,7 +16,7 @@ Windows Codex usage monitor / quota monitor：查看 5 小时、7 天和 30 天�
 | Codex 多账户额度 | 主界面查看多个账户，可选择悬浮窗显示哪一个账户 |
 | 桌面悬浮窗与系统托盘 | 可拖动、置顶的额度条，托盘提示同步显示相同数据 |
 
-只显示账户实际返回的额度周期。没有的周期不显示，用完的额度正常显示 **0%**。Credits 余额不是手动重置次数、Token 数或 API 账单。
+只显示账户实际返回的额度周期。没有的周期不显示，用完的额度正常显示 **0%**。Credits 显示 Codex 剩余额度，与 Token 数和 API 账单无关。
 
 ## 为什么使用这个额度监控工具？
 
@@ -24,14 +24,14 @@ Windows Codex usage monitor / quota monitor：查看 5 小时、7 天和 30 天�
 - 悬浮窗支持横排、竖排、贴边隐藏和 50%–200% 缩放。
 - 可以粘贴 Cookie 查看额度，也可以继续使用已有的 Codex 登录。
 - 切换悬浮窗展示的账户，不会改变 Codex 的实际登录。
-- 默认每 5 分钟获取最新用量；设置、悬浮窗右键和托盘右键可选 30 秒、1、2、5、10 分钟。
+- 只自动刷新悬浮窗当前显示的账户，默认每 5 分钟；账户卡片和悬浮窗右键可单独选择 30 秒、1、2、5、10 分钟。其他账户只手动刷新，关闭悬浮窗后暂停自动刷新。
 - 悬浮窗按钮可立即刷新，主界面、悬浮窗和托盘同步更新；网络失败保留上次成功值。
 - 重启后恢复悬浮窗位置和设置，关闭主界面后继续留在托盘。
 
 ## 下载和使用
 
 1. 从 [Releases](https://github.com/lxsxyxjh/codex-switcher/releases) 下载 `codex-switcher.exe`，放到长期保留的文件夹，双击运行。
-2. 点击 **账户 → 添加账户**。
+2. 点击 **添加账户**。
 3. 在设置或托盘右键菜单开启 **悬浮额度窗**。
 4. 将悬浮窗拖到合适的位置，右键选择账户、排列方式、缩放比例和更新间隔。
 
@@ -39,15 +39,17 @@ Windows Codex usage monitor / quota monitor：查看 5 小时、7 天和 30 天�
 
 ## 添加账户的方式
 
-| 方式 | 查看额度和 Credits | 切换 Codex 登录／预热 |
-| --- | --- | --- |
-| 导入 Codex `auth.json` | 支持，以账户返回的数据为准 | 支持 |
-| ChatGPT 浏览器登录 | 支持，以账户返回的数据为准 | 支持 |
-| 粘贴 ChatGPT Cookie | 支持，以账户返回的数据为准 | 不支持，仅查看额度 |
+| 方式 | 查看额度和 Credits |
+| --- | --- |
+| 导入 Codex `auth.json` | 支持，以账户返回的数据为准 |
+| ChatGPT 浏览器登录 | 支持，以账户返回的数据为准 |
+| 粘贴 ChatGPT Cookie | 支持，以账户返回的数据为准 |
+
+本软件只查看额度，不切换 Codex 登录、不修改 Codex 登录文件，也不发送预热请求。
 
 文件选择框默认定位到 `%USERPROFILE%\.codex\auth.json`；配置了 `CODEX_HOME` 时使用该目录。可以为多个 Cookie 账户分别输入凭证。同一个账户通过 Cookie 和 Codex 登录添加时分别保存；同一种方式重复添加会更新已有记录。
 
-账户备份使用 **账户 → 导出／导入**。左键点击托盘图标打开主界面，托盘右键 **退出程序** 才会彻底退出。
+账户备份使用 **导出／导入**。左键点击托盘图标打开主界面，托盘右键 **退出程序** 才会彻底退出。
 
 ## 常见问题
 
@@ -65,7 +67,7 @@ Windows Codex usage monitor / quota monitor：查看 5 小时、7 天和 30 天�
 
 ### 刷新额度会消耗 Codex 额度吗？
 
-刷新只是获取用量数据，不会发送 Codex 生成请求。**预热账户**是另一个可选功能，会发送小型 Codex 请求，可能消耗额度。
+刷新只获取用量数据，不发送 Codex 生成请求。
 
 ## 打包 Windows exe
 
@@ -88,6 +90,6 @@ src-tauri/target/exe-only/release/codex-switcher.exe
 
 ## 原项目和本版本范围
 
-基于 [Lampese](https://github.com/Lampese) 及其贡献者开发的 [Codex Switcher](https://github.com/Lampese/codex-switcher)。账户管理、登录、Codex 切换、额度请求和 Tauri 基础来自原项目。本分支增加 Windows 桌面额度悬浮窗、Cookie 账户输入、Credits 同步显示和简化操作。
+基于 [Lampese](https://github.com/Lampese) 及其贡献者开发的 [Codex Switcher](https://github.com/Lampese/codex-switcher)。账户存储、登录、额度请求和 Tauri 基础来自原项目。本分支专注额度查看，增加 Windows 桌面额度悬浮窗、Cookie 输入和 Credits 同步显示，并移除登录切换、预热及进程控制。
 
 这是社区项目，并非 OpenAI 官方应用。本版本面向 Windows，未验证本分支的 macOS 和 Linux 构建。

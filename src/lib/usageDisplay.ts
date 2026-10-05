@@ -1,4 +1,4 @@
-import type { UsageInfo } from "../types";
+import type { AccountInfo, UsageInfo } from "../types";
 
 export function mergeUsageUpdate(previous: UsageInfo | undefined, update: UsageInfo): UsageInfo {
   return update.error && previous?.account_id === update.account_id
@@ -71,3 +71,7 @@ export const usageRefreshIntervals = [
   { seconds: 300, label: "每 5 分钟（默认）" },
   { seconds: 600, label: "每 10 分钟" },
 ];
+
+export function getViewedAccount<T extends AccountInfo>(accounts: T[], accountId: string | null | undefined): T | undefined {
+  return accounts.find((account) => account.id === accountId) ?? accounts.find((account) => account.is_active) ?? accounts.find((account) => account.auth_mode === "cookie") ?? accounts[0];
+}

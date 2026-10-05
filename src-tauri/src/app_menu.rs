@@ -18,7 +18,7 @@ const TRAY_ACTIVE_USAGE_TEXT_ID: &str = "tray-display-active-usage-text";
 #[cfg(target_os = "macos")]
 const TRAY_HIDDEN_ID: &str = "tray-display-hidden";
 #[cfg(target_os = "macos")]
-const DESKTOP_REOPEN_SETTINGS_ID: &str = "desktop-reopen-settings";
+const SETTINGS_ITEM_ID: &str = "usage-settings";
 #[cfg(target_os = "macos")]
 pub(crate) const DOCK_SHOW_IN_DOCK_ID: &str = "dock-display-show-in-dock";
 #[cfg(target_os = "macos")]
@@ -57,10 +57,10 @@ pub fn refresh<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
     let item_id = event.id();
 
-    if item_id.as_ref() == DESKTOP_REOPEN_SETTINGS_ID {
+    if item_id.as_ref() == SETTINGS_ITEM_ID {
         crate::commands::open_main_window(app.clone());
-        if let Err(error) = app.emit_to("main", "desktop-reopen-settings-requested", ()) {
-            eprintln!("Failed to open desktop reopen settings: {error}");
+        if let Err(error) = app.emit_to("main", "floating-usage-settings-requested", ()) {
+            eprintln!("Failed to open usage settings: {error}");
         }
         return;
     }
@@ -276,10 +276,10 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, settings: &AppSettings) -> tauri::
         ],
     )?;
 
-    let desktop_reopen_settings = MenuItem::with_id(
+    let usage_settings = MenuItem::with_id(
         app,
-        DESKTOP_REOPEN_SETTINGS_ID,
-        "Reopen Codex after force close...",
+        SETTINGS_ITEM_ID,
+        "Usage settings...",
         cfg!(any(target_os = "macos", windows)),
         None::<&str>,
     )?;
@@ -289,7 +289,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, settings: &AppSettings) -> tauri::
         app,
         "Settings",
         true,
-        &[&tray_settings, &dock_settings, &desktop_reopen_settings],
+        &[&tray_settings, &dock_settings, &usage_settings],
     )?;
 
     #[cfg(not(target_os = "macos"))]
@@ -297,7 +297,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, settings: &AppSettings) -> tauri::
         app,
         "Settings",
         true,
-        &[&tray_settings, &desktop_reopen_settings],
+        &[&tray_settings, &usage_settings],
     )?;
 
     let window_menu = Submenu::with_items(
