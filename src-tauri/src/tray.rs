@@ -45,9 +45,20 @@ const TRAY_HEIGHT: f64 = 420.0;
 const FLOATING_USAGE_WIDTH: f64 = 260.0;
 const FLOATING_USAGE_HEIGHT: f64 = 48.0;
 static USAGE_REFRESH_SECONDS: AtomicU64 = AtomicU64::new(300);
+static NEXT_USAGE_REFRESH_AT: AtomicU64 = AtomicU64::new(0);
+
+pub fn next_usage_refresh_at() -> u64 {
+    NEXT_USAGE_REFRESH_AT.load(Ordering::Acquire)
+}
+
+fn update_next_usage_refresh(seconds: u64) {
+    let next = if seconds == 0 { 0 } else { chrono::Utc::now().timestamp() as u64 + seconds };
+    NEXT_USAGE_REFRESH_AT.store(next, Ordering::Release);
+}
 
 pub fn set_usage_refresh_interval(seconds: u64) {
     USAGE_REFRESH_SECONDS.store(seconds, Ordering::Release);
+    update_next_usage_refresh(seconds);
 }
 const ACCOUNT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
@@ -947,9 +958,11 @@ fn poll_active_account_usage<R: Runtime>(app: AppHandle<R>) {
         if current != interval {
             interval = current;
             last_refresh = Instant::now();
+            update_next_usage_refresh(interval);
         }
         if interval == 0 || last_refresh.elapsed() < Duration::from_secs(interval) { continue; }
         last_refresh = Instant::now();
+        update_next_usage_refresh(interval);
         let Ok(store) = load_accounts() else {
             continue;
         };

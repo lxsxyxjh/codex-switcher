@@ -40,6 +40,14 @@ pub fn get_cached_usage() -> Vec<UsageInfo> {
 }
 
 #[tauri::command]
+pub fn get_next_usage_refresh_at() -> u64 {
+    #[cfg(desktop)]
+    { crate::tray::next_usage_refresh_at() }
+    #[cfg(not(desktop))]
+    { 0 }
+}
+
+#[tauri::command]
 pub fn get_floating_usage_enabled() -> Option<bool> {
     #[cfg(target_os = "windows")]
     {
