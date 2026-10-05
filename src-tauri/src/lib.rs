@@ -129,6 +129,7 @@ pub fn run() {
             commands::get_floating_usage_options,
             commands::set_floating_usage_options,
             commands::resize_floating_usage,
+            commands::wait_for_floating_drag_release,
             get_floating_usage_enabled,
             set_floating_usage_enabled,
             save_floating_usage_position,

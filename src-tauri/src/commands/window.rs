@@ -157,6 +157,19 @@ pub fn set_floating_usage_options(
 }
 
 #[tauri::command]
+pub async fn wait_for_floating_drag_release() {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+        // Native dragging captures mouse input outside the webview. The start-dragging
+        // command only queues that operation, so its completion is not a mouse release.
+        while unsafe { GetAsyncKeyState(VK_LBUTTON as i32) } < 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        }
+    }
+}
+
+#[tauri::command]
 pub fn resize_floating_usage(
     app: AppHandle,
     width: f64,
@@ -191,15 +204,19 @@ pub fn resize_floating_usage(
             ("top", (position.y - top).abs()),
             ("bottom", (bottom - position.y - current_size.height as i32).abs()),
         ].into_iter().min_by_key(|(_, distance)| *distance)
-            .filter(|(_, distance)| *distance <= (24.0 * scale) as i32)
+            .filter(|(_, distance)| *distance <= (6.0 * scale).ceil() as i32)
             .map(|(edge, _)| edge.to_string());
     }
     let physical_width = (width.ceil() * scale).ceil() as i32;
     let physical_height = (height.ceil() * scale).ceil() as i32;
     let expanded_width = (full_width.ceil() * scale).ceil() as i32;
     let expanded_height = (full_height.ceil() * scale).ceil() as i32;
-    let mut x = position.x.clamp(left, (right - expanded_width).max(left));
-    let mut y = position.y.clamp(top, (bottom - expanded_height).max(top));
+    let mut x = position.x;
+    let mut y = position.y;
+    if dock.is_some() {
+        x = x.clamp(left, (right - expanded_width).max(left));
+        y = y.clamp(top, (bottom - expanded_height).max(top));
+    }
     let (mut anchor_x, mut anchor_y) = (x, y);
     match dock.as_deref() {
         Some("left") => { x = left; anchor_x = left; },
@@ -209,7 +226,9 @@ pub fn resize_floating_usage(
         _ => {},
     }
     window.set_size(tauri::LogicalSize::new(width.ceil(), height.ceil())).map_err(|error| error.to_string())?;
-    window.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|error| error.to_string())?;
+    if x != position.x || y != position.y {
+        window.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|error| error.to_string())?;
+    }
     settings.floating_usage_edge = dock.clone();
     settings.floating_usage_position = Some(FloatingUsagePosition { x: anchor_x, y: anchor_y });
     save_app_settings(&settings).map_err(|error| error.to_string())?;

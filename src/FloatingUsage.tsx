@@ -31,7 +31,12 @@ function remainingPercent(used: number | null | undefined, showUsed: boolean): s
 function FloatingUsage() {
   const barRef = useRef<HTMLDivElement>(null);
   const geometryRef = useRef<(detect?: boolean) => Promise<void>>(async () => {});
+  const geometryUpdateRef = useRef<(detect: boolean) => Promise<void>>(async () => {});
   const ignoreMovesUntil = useRef(0);
+  const draggingRef = useRef(false);
+  const geometryQueue = useRef<Promise<void>>(Promise.resolve());
+  const edgeHideEnabled = useRef<boolean | null>(null);
+  const dockedEdge = useRef<string | null>(null);
   const [fullSize, setFullSize] = useState({ width: 260, height: 48 });
   const [ready, setReady] = useState(false);
   const [edge, setEdge] = useState<string | null>(null);
@@ -44,7 +49,10 @@ function FloatingUsage() {
     try {
       const settings = await invokeBackend<FloatingOptions>("get_floating_usage_options");
       setOptions(settings);
-      setEdge(settings.floating_usage_edge);
+      if (!draggingRef.current) {
+        dockedEdge.current = settings.floating_usage_edge;
+        setEdge(settings.floating_usage_edge);
+      }
       setReady(true);
     } catch (error) {
       console.error("Failed to load floating usage settings:", error);
@@ -114,9 +122,10 @@ function FloatingUsage() {
       const currentWindow = getTauriWindow();
       if (currentWindow) {
         unlistenMoved = await currentWindow.onMoved(() => {
-          if (Date.now() < ignoreMovesUntil.current) return;
+          if (draggingRef.current || Date.now() < ignoreMovesUntil.current) return;
           window.clearTimeout(savePositionTimer);
           savePositionTimer = window.setTimeout(() => {
+            if (draggingRef.current) return;
             void geometryRef.current(true).catch(console.error);
           }, 250);
         });
@@ -153,22 +162,38 @@ function FloatingUsage() {
   const tabWidth = sideEdge ? 16 : Math.min(52, fullSize.width);
   const tabHeight = sideEdge ? Math.min(44, fullSize.height) : 16;
   const collapsed = options.floating_usage_edge_hide && Boolean(edge) && !hovered && !dragging && !contextOpen;
-  geometryRef.current = async (detect = false) => {
+  geometryUpdateRef.current = async (detect) => {
     const bar = barRef.current;
-    if (!bar || !ready || !isTauriRuntime()) return;
+    if (!bar || !ready || !isTauriRuntime() || (draggingRef.current && !detect)) return;
     const full = bar.getBoundingClientRect();
     setFullSize((previous) => previous.width === Math.ceil(full.width) && previous.height === Math.ceil(full.height) ? previous : { width: Math.ceil(full.width), height: Math.ceil(full.height) });
     ignoreMovesUntil.current = Date.now() + 1000;
     try {
       const nextEdge = await invokeBackend<string | null>("resize_floating_usage", {
-        width: collapsed ? tabWidth : Math.max(16, Math.ceil(full.width)),
-        height: collapsed ? tabHeight : Math.max(16, Math.ceil(full.height)),
+        width: collapsed && !draggingRef.current ? tabWidth : Math.max(16, Math.ceil(full.width)),
+        height: collapsed && !draggingRef.current ? tabHeight : Math.max(16, Math.ceil(full.height)),
         fullWidth: Math.max(16, Math.ceil(full.width)), fullHeight: Math.max(16, Math.ceil(full.height)),
-        edge, detectEdge: detect,
+        edge: draggingRef.current ? null : dockedEdge.current, detectEdge: detect,
       });
+      dockedEdge.current = nextEdge;
       setEdge(nextEdge);
     } finally { ignoreMovesUntil.current = Date.now() + 150; }
   };
+  geometryRef.current = (detect = false) => {
+    const pending = geometryQueue.current.then(() => geometryUpdateRef.current(detect));
+    geometryQueue.current = pending.catch(console.error);
+    return pending;
+  };
+  useEffect(() => {
+    if (!ready) return;
+    const enabled = options.floating_usage_edge_hide;
+    const newlyEnabled = enabled && edgeHideEnabled.current === false;
+    edgeHideEnabled.current = enabled;
+    if (newlyEnabled) {
+      setHovered(false);
+      void geometryRef.current(true).catch(console.error);
+    }
+  }, [ready, options.floating_usage_edge_hide]);
   useEffect(() => {
     const bar = barRef.current;
     if (!bar) return;
@@ -225,10 +250,23 @@ function FloatingUsage() {
     <div ref={barRef}
       onContextMenu={(event) => { event.preventDefault(); void showContextMenu().catch(console.error); }}
       onMouseDown={(event) => { if (event.button === 0 && currentWindow) {
-        setDragging(true); ignoreMovesUntil.current = 0;
-        void currentWindow.startDragging().catch(console.error).finally(() => {
-          void geometryRef.current(true).catch(console.error).finally(() => setDragging(false));
-        });
+        if (draggingRef.current) return;
+        draggingRef.current = true;
+        setDragging(true);
+        dockedEdge.current = null;
+        setEdge(null);
+        void (async () => {
+          try {
+            await geometryQueue.current;
+            await currentWindow.startDragging();
+            await invokeBackend("wait_for_floating_drag_release");
+            await geometryRef.current(true);
+          } finally {
+            draggingRef.current = false;
+            setDragging(false);
+            setHovered(false);
+          }
+        })().catch(console.error);
       } }}
       title={`${displayAccount?.name ?? "未添加账户"} · ${mode}百分比${isStale ? " · 刷新失败，保留上次成功数据" : ""} · 右键设置`}
       className="select-none border border-slate-300/80 bg-slate-100/95 text-slate-600 dark:border-slate-600/80 dark:bg-slate-800/95 dark:text-slate-200"
