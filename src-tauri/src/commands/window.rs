@@ -109,6 +109,23 @@ pub fn get_floating_usage_options() -> Result<AppSettings, String> {
 }
 
 #[tauri::command]
+pub fn set_usage_refresh_interval(app: AppHandle, seconds: u64) -> Result<(), String> {
+    if ![0, 30, 60, 120, 300, 600].contains(&seconds) {
+        return Err("请选择有效的自动刷新间隔".into());
+    }
+    let mut settings = load_app_settings().map_err(|error| error.to_string())?;
+    settings.usage_refresh_interval_seconds = seconds;
+    save_app_settings(&settings).map_err(|error| error.to_string())?;
+    #[cfg(desktop)]
+    {
+        crate::tray::set_usage_refresh_interval(seconds);
+        crate::tray::refresh(&app);
+    }
+    let _ = app.emit("app-settings-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
 pub fn set_floating_usage_options(
     app: AppHandle,
     scale: Option<u16>,

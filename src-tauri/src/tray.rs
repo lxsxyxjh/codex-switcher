@@ -3,10 +3,10 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     LazyLock, Mutex,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{
-    menu::{CheckMenuItemBuilder, Menu, MenuItemBuilder, PredefinedMenuItem},
+    menu::{CheckMenuItemBuilder, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, PhysicalPosition, Runtime, WebviewUrl, WebviewWindowBuilder,
     WindowEvent,
@@ -44,7 +44,11 @@ const TRAY_WIDTH: f64 = 300.0;
 const TRAY_HEIGHT: f64 = 420.0;
 const FLOATING_USAGE_WIDTH: f64 = 260.0;
 const FLOATING_USAGE_HEIGHT: f64 = 48.0;
-const USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+static USAGE_REFRESH_SECONDS: AtomicU64 = AtomicU64::new(300);
+
+pub fn set_usage_refresh_interval(seconds: u64) {
+    USAGE_REFRESH_SECONDS.store(seconds, Ordering::Release);
+}
 const ACCOUNT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 #[derive(Clone, serde::Serialize)]
@@ -518,6 +522,12 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, store: &AccountsStore) -> tauri::R
     menu.append(&CheckMenuItemBuilder::with_id(FLOATING_ITEM_ID, "悬浮额度窗")
         .checked(load_app_settings().map(|settings| settings.floating_usage_enabled).unwrap_or(false))
         .build(app)?)?;
+    let interval = load_app_settings().unwrap_or_default().usage_refresh_interval_seconds;
+    let refresh_menu = Submenu::new(app, "额度自动刷新", true)?;
+    for (seconds, label) in [(30, "每 30 秒"), (60, "每 1 分钟"), (120, "每 2 分钟"), (300, "每 5 分钟（默认）"), (600, "每 10 分钟"), (0, "关闭自动刷新")] {
+        refresh_menu.append(&CheckMenuItemBuilder::with_id(format!("usage-refresh:{seconds}"), label).checked(interval == seconds).build(app)?)?;
+    }
+    menu.append(&refresh_menu)?;
     #[cfg(target_os = "macos")]
     append_dock_settings_menu(app, &menu)?;
     #[cfg(target_os = "macos")]
@@ -551,6 +561,12 @@ fn append_dock_settings_menu<R: Runtime>(app: &AppHandle<R>, menu: &Menu<R>) -> 
 
 fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
     let item_id = event.id().as_ref();
+    if let Some(seconds) = item_id.strip_prefix("usage-refresh:").and_then(|value| value.parse::<u64>().ok()) {
+        if let Err(error) = crate::commands::set_usage_refresh_interval(app.clone(), seconds) {
+            eprintln!("Failed to save usage refresh interval: {error}");
+        }
+        return;
+    }
 
     #[cfg(target_os = "macos")]
     if let Some(mode) = crate::app_menu::dock_display_mode_for_item(item_id) {
@@ -720,7 +736,8 @@ fn usage_tooltip(usage: Option<&UsageInfo>) -> String {
             .map(|number| if number.fract() == 0.0 { format!("{number:.0}") } else { format!("{number:.2}") })
             .unwrap_or_else(|| value.to_string())
     }).unwrap_or_else(|| "--".into());
-    let status = if usage.error.is_some() { "刷新失败，保留上次数据" } else { "每 5 分钟自动刷新" };
+    let seconds = load_app_settings().unwrap_or_default().usage_refresh_interval_seconds;
+    let status = if usage.error.is_some() { "刷新失败，保留上次数据".into() } else if seconds == 0 { "自动刷新已关闭".into() } else { format!("每 {seconds} 秒自动刷新") };
     format!("Codex Switcher\n剩余 {windows} · 余额 {credits}\n{status}")
 }
 
@@ -919,8 +936,20 @@ fn account_for_usage_poll(store: AccountsStore) -> Option<StoredAccount> {
 
 /// Desktop windows share one periodic refresh. Hidden windows only need the displayed account.
 fn poll_active_account_usage<R: Runtime>(app: AppHandle<R>) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(USAGE_REFRESH_INTERVAL);
+    set_usage_refresh_interval(load_app_settings().unwrap_or_default().usage_refresh_interval_seconds);
+    std::thread::spawn(move || {
+      let mut interval = USAGE_REFRESH_SECONDS.load(Ordering::Acquire);
+      let mut last_refresh = Instant::now();
+      loop {
+        // Only the shared scheduler wakes here; changing the interval starts a new countdown.
+        std::thread::sleep(Duration::from_secs(1));
+        let current = USAGE_REFRESH_SECONDS.load(Ordering::Acquire);
+        if current != interval {
+            interval = current;
+            last_refresh = Instant::now();
+        }
+        if interval == 0 || last_refresh.elapsed() < Duration::from_secs(interval) { continue; }
+        last_refresh = Instant::now();
         let Ok(store) = load_accounts() else {
             continue;
         };
@@ -942,6 +971,7 @@ fn poll_active_account_usage<R: Runtime>(app: AppHandle<R>) {
                 Err(error) => ingest_usage(&app, vec![UsageInfo::error(account.id.clone(), error.to_string())]),
             }
         }
+      }
     });
 }
 

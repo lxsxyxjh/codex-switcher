@@ -64,3 +64,11 @@ export function formatCreditsBalance(balance: string | null | undefined): string
 
   return `${prefix}${formatted}${suffix}`;
 }
+export const usageRefreshIntervals = [
+  { seconds: 30, label: "每 30 秒" },
+  { seconds: 60, label: "每 1 分钟" },
+  { seconds: 120, label: "每 2 分钟" },
+  { seconds: 300, label: "每 5 分钟（默认）" },
+  { seconds: 600, label: "每 10 分钟" },
+  { seconds: 0, label: "关闭自动刷新" },
+];

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AccountInfo, UsageInfo } from "./types";
 import { invokeBackend, isTauriRuntime } from "./lib/platform";
 import { getTauriWindow, isCursorInsideWindow } from "./lib/tauriWindow";
-import { formatCreditsBalance, formatUsagePercent, getDisplayedUsageWindows, mergeUsageUpdate } from "./lib/usageDisplay";
+import { formatCreditsBalance, formatUsagePercent, getDisplayedUsageWindows, mergeUsageUpdate, usageRefreshIntervals } from "./lib/usageDisplay";
 import {
   applyTheme,
   syncThemeFromStorage,
@@ -14,6 +14,7 @@ const USAGE_UPDATED_EVENT = "usage-updated";
 const ACCOUNTS_CHANGED_EVENT = "accounts-changed";
 
 export interface FloatingOptions {
+  usage_refresh_interval_seconds: number;
   floating_usage_enabled: boolean;
   floating_usage_scale: number;
   floating_usage_account_id: string | null;
@@ -42,7 +43,7 @@ function FloatingUsage() {
   const [contextOpen, setContextOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const menuRef = useRef<import("@tauri-apps/api/menu").Menu | null>(null);
-  const [options, setOptions] = useState<FloatingOptions>({ floating_usage_enabled: false, floating_usage_scale: 100, floating_usage_account_id: null, floating_usage_show_used: false, floating_usage_vertical: false, floating_usage_edge_hide: false, floating_usage_edge: null });
+  const [options, setOptions] = useState<FloatingOptions>({ usage_refresh_interval_seconds: 300, floating_usage_enabled: false, floating_usage_scale: 100, floating_usage_account_id: null, floating_usage_show_used: false, floating_usage_vertical: false, floating_usage_edge_hide: false, floating_usage_edge: null });
   const loadOptions = useCallback(async () => {
     try {
       const settings = await invokeBackend<FloatingOptions>("get_floating_usage_options");
@@ -222,6 +223,7 @@ function FloatingUsage() {
     await menuRef.current?.close();
     const menu = await Menu.new({ items: [
       { text: "打开主界面", action: () => { void invokeBackend("open_main_window"); } },
+      { text: "额度自动刷新", items: usageRefreshIntervals.map(({ seconds, label }) => ({ text: label, checked: options.usage_refresh_interval_seconds === seconds, action: () => { void invokeBackend("set_usage_refresh_interval", { seconds }).catch(console.error); } })) },
       { text: "显示账户", items: [
         { text: "跟随当前账户", checked: !accounts.some((account) => account.id === options.floating_usage_account_id), action: () => saveOptions({ accountId: "" }) },
         ...accounts.map((account) => ({ text: `${account.name} (${account.auth_mode === "cookie" ? "Cookie" : "Codex 登录"})`, checked: options.floating_usage_account_id === account.id, action: () => saveOptions({ accountId: account.id }) })),

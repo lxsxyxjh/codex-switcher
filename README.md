@@ -23,7 +23,7 @@ This fork focuses on **Windows x64**. Its Windows interface is currently in Chin
 - **Layout and edge hiding:** choose a horizontal bar or vertical label/value rows. Enable edge hiding, drag to a screen edge, and hover over the small tab to expand it. Drag away from the edge to undock.
 - **Remembered settings:** the bar restores its position, visibility, size, and display preferences after restarting.
 - **Cookie accounts:** add a browser Cookie to check quota alongside accounts added through a Codex login file or ChatGPT login.
-- **Shared refresh:** quota refreshes on startup and every **5 minutes**. Manual refresh updates the displays immediately. A failed refresh keeps the previous successful values.
+- **Shared refresh:** quota refreshes on startup and every **5 minutes** by default. Choose 30 seconds, 1, 2, 5, or 10 minutes, or turn automatic refresh off, in Settings or the floating window / tray context menu. Your choice is saved. Manual refresh updates all displays immediately. A failed refresh keeps the previous successful values.
 - **Simpler account setup:** login file first, ChatGPT login second, Cookie third. Account names are identified automatically; the account menu has just Import and Export file actions.
 - **Stay in the tray:** closing the main window keeps the app running. Launching it again reopens the existing window instead of starting a second copy.
 - **Small Windows executable:** build an exe without creating installers or updater signatures.

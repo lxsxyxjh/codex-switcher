@@ -4,6 +4,7 @@ import type { CodexClosePreference } from "../lib/codexClosePreference";
 import { invokeBackend, isTauriRuntime, isWindowsPlatform } from "../lib/platform";
 import type { FloatingOptions } from "../FloatingUsage";
 import type { DockDisplayMode } from "../types";
+import { usageRefreshIntervals } from "../lib/usageDisplay";
 
 type TrayDisplayMode = "icon_and_session" | "active_usage_text" | "hidden";
 interface DisplaySettings {
@@ -104,6 +105,15 @@ export function SettingsModal({
   };
 
   const selectClassName = "w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 disabled:opacity-50";
+  const changeRefreshInterval = async (seconds: number) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await invokeBackend("set_usage_refresh_interval", { seconds });
+      await loadDisplaySettings();
+    } catch (err) { setError(String(err)); }
+    finally { setSaving(false); }
+  };
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
@@ -151,6 +161,11 @@ export function SettingsModal({
             </>
           )}
           {floating && <section className="grid gap-3">
+            <label htmlFor="usage-refresh-interval" className="text-sm font-medium">额度自动刷新</label>
+            <select id="usage-refresh-interval" className={selectClassName} disabled={saving} value={floating.usage_refresh_interval_seconds} onChange={(event) => void changeRefreshInterval(Number(event.target.value))}>
+              {usageRefreshIntervals.map(({ seconds, label }) => <option key={seconds} value={seconds}>{label}</option>)}
+            </select>
+            <p className="text-xs text-gray-500">主界面显示时刷新所有账户，隐藏时刷新当前显示账户。所有窗口同步更新；关闭自动刷新后仍可手动刷新。</p>
             <label className="text-sm font-medium"><input type="checkbox" checked={floating.floating_usage_enabled} disabled={saving} onChange={(event) => void changeFloating({ enabled: event.target.checked })} /> 桌面悬浮额度窗</label>
             <label htmlFor="floating-layout" className="text-sm">悬浮窗排列方式</label>
             <select id="floating-layout" className={selectClassName} disabled={saving} value={String(floating.floating_usage_vertical)} onChange={(event) => void changeFloating({ vertical: event.target.value === "true" })}>
@@ -168,7 +183,7 @@ export function SettingsModal({
             </div>
             <p className="text-xs text-gray-500">右键悬浮窗可以选择显示账户、打开主界面或关闭悬浮窗。</p>
           </section>}
-          <p className="text-xs text-gray-500">额度每 5 分钟自动刷新，也可以在主界面手动刷新。网络异常时保留上次成功数据。</p>
+          <p className="text-xs text-gray-500">可以在主界面或悬浮窗手动刷新。网络异常时保留上次成功数据。</p>
           <label htmlFor="codex-close-preference" className="block text-sm font-medium text-gray-900 dark:text-gray-100">
             Codex 关闭方式
           </label>
