@@ -86,7 +86,7 @@ src-tauri/target/exe-only/release/codex-switcher.exe
 
 不需要安装包或 updater 签名密钥。发版时可先用 `pnpm version:patch` 调整版本，编译并检查 exe，再上传到自己的 GitHub Release。继承的更新器仍指向原作者仓库；未配置自己的更新服务前，通过手动下载 exe 更新。开发调试：`pnpm tauri:win dev`。
 
-也可以使用 GitHub Actions 自动打包：推送与 `package.json` 版本一致的标签（例如 `v0.2.21`），或在 **Windows EXE Release** 中输入已有标签运行。只编译 Windows，并把 exe 上传到 Release 草稿；检查草稿后点击 **Publish release**。已有 exe 附件不会被覆盖，不需要配置签名密钥。
+也可以使用 GitHub Actions 自动打包：推送与 `package.json` 版本一致的标签（例如 `v0.2.21`），或在 **Windows EXE Release** 中输入已有标签运行。只编译 Windows，并自动发布 Release 并附上 exe。已有 exe 附件不会被覆盖，不需要配置签名密钥。
 
 ## 0.2.21 版本
 

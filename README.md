@@ -86,7 +86,7 @@ src-tauri/target/exe-only/release/codex-switcher.exe
 
 No installer or updater signing key is required. To publish, optionally bump the version with `pnpm version:patch` before building, check the exe, and upload it to your own GitHub Release. The inherited updater still targets the original repository; use manual exe downloads unless you configure your own update service. Development: `pnpm tauri:win dev`.
 
-GitHub Actions can also build the exe: push a version tag matching `package.json` (for example `v0.2.21`), or run **Windows EXE Release** with an existing tag. It builds Windows only and uploads the exe to a Release draft. Review the draft and click **Publish release**. Existing exe attachments are preserved. No signing secrets are needed.
+GitHub Actions can also build the exe: push a version tag matching `package.json` (for example `v0.2.21`), or run **Windows EXE Release** with an existing tag. It builds Windows only and publishes a Release with the exe attached. Existing exe attachments are preserved. No signing secrets are needed.
 
 ## Version 0.2.21
 

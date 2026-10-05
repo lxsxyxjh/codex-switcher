@@ -85,8 +85,8 @@ jobs:
               exit 0
             }
           } else {
-            gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --verify-tag --draft --title "$env:RELEASE_TAG — Windows Codex Quota & Credits Monitor" --notes 'Windows x64 Codex quota, Credits balance and floating widget. Windows Codex 额度与余额悬浮窗。Download codex-switcher.exe. Requires WebView2. Based on Lampese/codex-switcher.'
-            if ($LASTEXITCODE -ne 0) { throw 'Could not create the release draft.' }
+            gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --verify-tag --title "$env:RELEASE_TAG — Windows Codex Quota & Credits Monitor" --notes 'Windows x64 Codex quota, Credits balance and floating widget. Windows Codex 额度与余额悬浮窗。Download codex-switcher.exe. Requires WebView2. Based on Lampese/codex-switcher.'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create the release.' }
           }
           gh release upload $env:RELEASE_TAG 'src-tauri/target/exe-only/release/codex-switcher.exe' --repo $env:GITHUB_REPOSITORY
           if ($LASTEXITCODE -ne 0) { throw 'Could not upload the exe.' }
