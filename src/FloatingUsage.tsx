@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AccountInfo, UsageInfo } from "./types";
 import { invokeBackend, isTauriRuntime } from "./lib/platform";
-import { getTauriWindow } from "./lib/tauriWindow";
+import { getTauriWindow, isCursorInsideWindow } from "./lib/tauriWindow";
 import { formatCreditsBalance, formatUsagePercent, formatUsageWindowLabel } from "./lib/usageDisplay";
 import {
   applyTheme,
@@ -32,12 +32,15 @@ function FloatingUsage() {
   const geometryQueue = useRef<Promise<void>>(Promise.resolve());
   const edgeHideEnabled = useRef<boolean | null>(null);
   const dockedEdge = useRef<string | null>(null);
+  const hoverLeaveTimer = useRef<number | undefined>(undefined);
+  const refreshInFlight = useRef(false);
   const [fullSize, setFullSize] = useState({ width: 260, height: 48 });
   const [ready, setReady] = useState(false);
   const [edge, setEdge] = useState<string | null>(null);
   const [hovered, setHovered] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const menuRef = useRef<import("@tauri-apps/api/menu").Menu | null>(null);
   const [options, setOptions] = useState<FloatingOptions>({ floating_usage_enabled: false, floating_usage_scale: 100, floating_usage_account_id: null, floating_usage_show_used: false, floating_usage_vertical: false, floating_usage_edge_hide: false, floating_usage_edge: null });
   const loadOptions = useCallback(async () => {
@@ -135,6 +138,7 @@ function FloatingUsage() {
 
     return () => {
       disposed = true;
+      window.clearTimeout(hoverLeaveTimer.current);
       unlistenSettings?.();
       void menuRef.current?.close().catch(console.error);
       if (savePositionTimer !== undefined) window.clearTimeout(savePositionTimer);
@@ -194,12 +198,25 @@ function FloatingUsage() {
     if (!bar) return;
     const observer = new ResizeObserver(() => { void geometryRef.current().catch(console.error); });
     observer.observe(bar);
-    void geometryRef.current().catch(console.error);
     return () => observer.disconnect();
   }, [ready, collapsed, edge, tabWidth, tabHeight, options.floating_usage_vertical, options.floating_usage_scale, options.floating_usage_edge_hide]);
 
   const saveOptions = (values: { scale?: number; accountId?: string; showUsed?: boolean; vertical?: boolean; edgeHide?: boolean }) => {
     void invokeBackend<FloatingOptions>("set_floating_usage_options", values).then(setOptions).catch(console.error);
+  };
+  const refreshUsage = async () => {
+    if (!displayAccount || refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    setRefreshing(true);
+    try {
+      await invokeBackend<UsageInfo>("get_usage", { accountId: displayAccount.id });
+    } catch (error) {
+      setStaleById((previous) => ({ ...previous, [displayAccount.id]: true }));
+      console.error("Failed to refresh floating usage:", error);
+    } finally {
+      refreshInFlight.current = false;
+      setRefreshing(false);
+    }
   };
   const showContextMenu = async () => {
     setContextOpen(true);
@@ -240,12 +257,32 @@ function FloatingUsage() {
   const scale = options.floating_usage_scale / 100;
   const mode = options.floating_usage_show_used ? "已用" : "剩余";
   return (
-    <div onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+    <div onMouseEnter={() => {
+      window.clearTimeout(hoverLeaveTimer.current);
+      hoverLeaveTimer.current = undefined;
+      setHovered(true);
+    }} onMouseLeave={() => {
+      if (draggingRef.current) return;
+      window.clearTimeout(hoverLeaveTimer.current);
+      const timer = window.setTimeout(() => {
+        void (async () => {
+          await geometryQueue.current;
+          const inside = await isCursorInsideWindow();
+          if (!draggingRef.current && hoverLeaveTimer.current === timer) {
+            hoverLeaveTimer.current = undefined;
+            setHovered(inside);
+          }
+        })().catch(console.error);
+      }, 100);
+      hoverLeaveTimer.current = timer;
+    }}>
     {collapsed && <div title="鼠标移入展开额度，右键设置" className="grid place-items-center rounded-lg border border-slate-400 bg-slate-200 text-xs text-slate-600 dark:bg-slate-700 dark:text-slate-200" style={{ width: tabWidth, height: tabHeight }} onContextMenu={(event) => { event.preventDefault(); void showContextMenu().catch(console.error); }}>{edge === "left" ? "›" : edge === "right" ? "‹" : edge === "top" ? "⌄" : "⌃"}</div>}
     <div ref={barRef}
       onContextMenu={(event) => { event.preventDefault(); void showContextMenu().catch(console.error); }}
       onMouseDown={(event) => { if (event.button === 0 && currentWindow) {
         if (draggingRef.current) return;
+        window.clearTimeout(hoverLeaveTimer.current);
+        hoverLeaveTimer.current = undefined;
         draggingRef.current = true;
         setDragging(true);
         dockedEdge.current = null;
@@ -257,19 +294,29 @@ function FloatingUsage() {
             await invokeBackend("wait_for_floating_drag_release");
             await geometryRef.current(true);
           } finally {
-            draggingRef.current = false;
-            setDragging(false);
-            setHovered(false);
+            try { setHovered(await isCursorInsideWindow()); }
+            finally {
+              draggingRef.current = false;
+              setDragging(false);
+            }
           }
         })().catch(console.error);
       } }}
       title={`${displayAccount?.name ?? "未添加账户"} · ${mode}百分比${isStale ? " · 刷新失败，保留上次成功数据" : ""} · 右键设置`}
       className="select-none border border-slate-300/80 bg-slate-100/95 text-slate-600 dark:border-slate-600/80 dark:bg-slate-800/95 dark:text-slate-200"
-      style={{ display: "inline-grid", position: collapsed ? "absolute" : "relative", visibility: collapsed ? "hidden" : "visible", pointerEvents: collapsed ? "none" : "auto", gridTemplateColumns: options.floating_usage_vertical ? "max-content" : "repeat(3, max-content)", width: "max-content", gap: 10 * scale, padding: `${8 * scale}px ${10 * scale}px`, fontSize: 12 * scale, lineHeight: 1.5, borderRadius: 10 * scale }}
+      style={{ display: "inline-grid", position: collapsed ? "absolute" : "relative", visibility: collapsed ? "hidden" : "visible", pointerEvents: collapsed ? "none" : "auto", gridTemplateColumns: options.floating_usage_vertical ? "max-content auto" : "repeat(4, max-content)", alignItems: "center", width: "max-content", gap: 10 * scale, padding: `${8 * scale}px ${10 * scale}px`, fontSize: 12 * scale, lineHeight: 1.5, borderRadius: 10 * scale }}
     >
-      <span className="whitespace-nowrap tabular-nums">{formatUsageWindowLabel(usage?.primary_window_minutes, "5h")} {mode}{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatUsagePercent(usage?.primary_used_percent, options.floating_usage_show_used)}</b></span>
-      <span className="whitespace-nowrap tabular-nums">{formatUsageWindowLabel(usage?.secondary_window_minutes, "7d")} {mode}{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatUsagePercent(usage?.secondary_used_percent, options.floating_usage_show_used)}</b></span>
-      <span className="whitespace-nowrap tabular-nums">{isStale && <span className="text-amber-500">• </span>}余额{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatCreditsBalance(usage?.credits_balance)}</b></span>
+      <span className="whitespace-nowrap tabular-nums" style={{ gridColumn: options.floating_usage_vertical ? 1 : undefined }}>{formatUsageWindowLabel(usage?.primary_window_minutes, "5h")} {mode}{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatUsagePercent(usage?.primary_used_percent, options.floating_usage_show_used)}</b></span>
+      <span className="whitespace-nowrap tabular-nums" style={{ gridColumn: options.floating_usage_vertical ? 1 : undefined }}>{formatUsageWindowLabel(usage?.secondary_window_minutes, "7d")} {mode}{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatUsagePercent(usage?.secondary_used_percent, options.floating_usage_show_used)}</b></span>
+      <span className="whitespace-nowrap tabular-nums" style={{ gridColumn: options.floating_usage_vertical ? 1 : undefined }}>{isStale && <span className="text-amber-500">• </span>}余额{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatCreditsBalance(usage?.credits_balance)}</b></span>
+      <button type="button" aria-label="刷新当前账户额度" title={refreshing ? "正在刷新额度…" : "刷新当前显示账户的额度，同步更新主界面和托盘"}
+        disabled={refreshing || !displayAccount}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={() => { void refreshUsage().catch(console.error); }}
+        className="grid place-items-center rounded-lg border-0 bg-transparent text-slate-500 hover:bg-slate-200 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-700"
+        style={{ width: Math.max(24, 24 * scale), height: Math.max(24, 24 * scale), fontSize: Math.max(14, 16 * scale), gridColumn: options.floating_usage_vertical ? 2 : undefined, gridRow: options.floating_usage_vertical ? "1 / 4" : undefined }}>
+        <span className={refreshing ? "animate-spin" : undefined}>↻</span>
+      </button>
     </div>
     </div>
   );

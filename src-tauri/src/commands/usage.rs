@@ -43,15 +43,18 @@ pub async fn fetch_usage(account_id: &str) -> Result<UsageInfo, String> {
 /// Get usage info for a specific account
 #[tauri::command]
 pub async fn get_usage(app: tauri::AppHandle, account_id: String) -> Result<UsageInfo, String> {
-    let usage = fetch_usage(&account_id).await?;
+    let result = fetch_usage(&account_id).await;
 
     // Keep the tray menu/title in sync with whichever UI fetched fresh usage.
     #[cfg(desktop)]
-    crate::tray::ingest_usage(&app, vec![usage.clone()]);
+    crate::tray::ingest_usage(&app, vec![match &result {
+        Ok(usage) => usage.clone(),
+        Err(error) => UsageInfo::error(account_id, error.clone()),
+    }]);
     #[cfg(not(desktop))]
     let _ = app;
 
-    Ok(usage)
+    result
 }
 
 /// Refresh account metadata for a specific account.

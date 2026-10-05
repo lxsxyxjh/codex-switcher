@@ -232,13 +232,19 @@ pub fn resize_floating_usage(
         Some("bottom") => { y = bottom - physical_height; anchor_y = bottom - expanded_height; },
         _ => {},
     }
-    window.set_size(tauri::LogicalSize::new(width.ceil(), height.ceil())).map_err(|error| error.to_string())?;
+    if current_size.width as i32 != physical_width || current_size.height as i32 != physical_height {
+        window.set_size(tauri::LogicalSize::new(width.ceil(), height.ceil())).map_err(|error| error.to_string())?;
+    }
     if x != position.x || y != position.y {
         window.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|error| error.to_string())?;
     }
-    settings.floating_usage_edge = dock.clone();
-    settings.floating_usage_position = Some(FloatingUsagePosition { x: anchor_x, y: anchor_y });
-    save_app_settings(&settings).map_err(|error| error.to_string())?;
+    if settings.floating_usage_edge != dock
+        || settings.floating_usage_position.map(|position| (position.x, position.y)) != Some((anchor_x, anchor_y))
+    {
+        settings.floating_usage_edge = dock.clone();
+        settings.floating_usage_position = Some(FloatingUsagePosition { x: anchor_x, y: anchor_y });
+        save_app_settings(&settings).map_err(|error| error.to_string())?;
+    }
     Ok(dock)
 }
 

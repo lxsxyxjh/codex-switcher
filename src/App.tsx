@@ -823,33 +823,31 @@ function App() {
       setIsWarmingAll(true);
       const summary = await warmupAllAccounts();
       if (summary.total_accounts === 0) {
-        showWarmupToast("No accounts available for warm-up", true);
+        showWarmupToast("没有可预热的登录账户；Cookie 账户仅用于查看额度。", true);
         return;
       }
 
       const warmedAt = Date.now();
       const failedAccountIds = new Set(summary.failed_account_ids);
       accounts.forEach((account) => {
-        if (!failedAccountIds.has(account.id)) {
+        if (account.auth_mode !== "cookie" && !failedAccountIds.has(account.id)) {
           markSuccessfulWarmup(account.id, warmedAt);
         }
       });
 
       if (summary.failed_account_ids.length === 0) {
         showWarmupToast(
-          `Warm-up sent for all ${summary.warmed_accounts} account${
-            summary.warmed_accounts === 1 ? "" : "s"
-          }`
+          `已向 ${summary.warmed_accounts} 个账户发送预热请求。预热不会补充额度。`
         );
       } else {
         showWarmupToast(
-          `Warmed ${summary.warmed_accounts}/${summary.total_accounts}. Failed: ${summary.failed_account_ids.length}`,
+          `预热成功 ${summary.warmed_accounts}/${summary.total_accounts} 个账户，失败 ${summary.failed_account_ids.length} 个。`,
           true
         );
       }
     } catch (err) {
       console.error("Failed to warm up all accounts:", err);
-      showWarmupToast(`Warm-up all failed: ${formatWarmupError(err)}`, true);
+      showWarmupToast(`预热失败：${formatWarmupError(err)}`, true);
     } finally {
       setIsWarmingAll(false);
     }
@@ -1389,22 +1387,20 @@ function App() {
               <button
                 onClick={handleRefresh}
                 disabled={isRefreshing}
-                className="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-100 text-gray-700 transition-colors hover:bg-gray-200 disabled:opacity-50 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 shrink-0"
-                title={isRefreshing ? "正在刷新所有额度" : "刷新所有额度"}
+                className="grid h-[34px] grid-flow-col items-center gap-1 rounded-lg bg-sky-50 px-3 text-sm text-sky-700 transition-colors hover:bg-sky-100 disabled:opacity-50 dark:bg-sky-900/20 dark:text-sky-300"
+                title="查询所有账户的最新额度和余额，不发送模型请求；结果同步到悬浮窗和托盘。"
               >
                 <span className={isRefreshing ? "animate-spin inline-block" : ""}>↻</span>
+                <span>{isRefreshing ? "正在刷新…" : "刷新额度"}</span>
               </button>
               <button
                 onClick={() => void handleWarmupAll()}
-                disabled={isWarmingAll || accounts.length === 0}
-                className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors disabled:opacity-50 shrink-0 ${
-                  isWarmingAll
-                    ? "bg-amber-100 text-amber-500 dark:bg-amber-900/30 dark:text-amber-300"
-                    : "bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/40"
-                }`}
-                title={isWarmingAll ? "正在预热所有账户" : "预热所有账户"}
+                disabled={isWarmingAll || !accounts.some((account) => account.auth_mode !== "cookie")}
+                className="grid h-[34px] grid-flow-col items-center gap-1 rounded-lg bg-transparent px-2 text-sm text-gray-600 transition-colors hover:bg-gray-100 disabled:opacity-50 dark:text-gray-300 dark:hover:bg-gray-800"
+                title="向登录账户发送一条简短模型请求，提前唤醒模型，可能消耗少量额度。不会补充额度，Cookie 账户跳过；仅查看额度无需预热。"
               >
                 <span className={isWarmingAll ? "animate-pulse" : ""}>⚡</span>
+                <span>{isWarmingAll ? "正在预热…" : "预热账户"}</span>
               </button>
               {isAccountSearchEnabled && (
                 <button

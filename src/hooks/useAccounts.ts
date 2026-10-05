@@ -38,13 +38,6 @@ export function useAccounts() {
     []
   );
 
-  // Send failures to the shared cache so other windows can keep their last successful values.
-  const reportUsageToTray = useCallback((usages: UsageInfo[]) => {
-    const failures = usages.filter((usage) => usage.error);
-    if (!isTauriRuntime() || failures.length === 0) return;
-    void invokeBackend("report_usage", { usages: failures }).catch(() => {});
-  }, []);
-
   const runWithConcurrency = useCallback(
     async <T,>(
       items: T[],
@@ -201,8 +194,6 @@ export function useAccounts() {
             };
           })
         );
-
-        reportUsageToTray(Array.from(usageResults.values()));
         await metadataPromise;
       } catch (err) {
         console.error("Failed to refresh usage:", err);
@@ -213,7 +204,6 @@ export function useAccounts() {
       buildUsageError,
       maxConcurrentUsageRequests,
       refreshMetadata,
-      reportUsageToTray,
       runWithConcurrency,
     ]
   );
@@ -239,7 +229,6 @@ export function useAccounts() {
           a.id === accountId ? { ...a, usage: usage.error && a.usage ? { ...a.usage, error: usage.error } : usage, usageLoading: false } : a
         )
       );
-      reportUsageToTray([usage]);
       await metadataPromise;
       return usage;
     } catch (err) {
@@ -261,10 +250,9 @@ export function useAccounts() {
             : a
         )
       );
-      reportUsageToTray([failedUsage]);
       throw err;
     }
-  }, [buildUsageError, refreshMetadata, reportUsageToTray]);
+  }, [buildUsageError, refreshMetadata]);
 
   const warmupAccount = useCallback(async (accountId: string) => {
     try {

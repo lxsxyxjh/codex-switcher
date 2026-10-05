@@ -1,4 +1,4 @@
-import { getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
+import { cursorPosition, getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
 
 let cachedWindow: TauriWindow | null = null;
 
@@ -11,4 +11,22 @@ export function getTauriWindow(): TauriWindow | null {
     return null;
   }
   return (cachedWindow ??= getCurrentWindow());
+}
+
+export function isPointInsideWindow(
+  point: { x: number; y: number },
+  position: { x: number; y: number },
+  size: { width: number; height: number },
+): boolean {
+  return point.x >= position.x && point.y >= position.y
+    && point.x < position.x + size.width && point.y < position.y + size.height;
+}
+
+export async function isCursorInsideWindow(): Promise<boolean> {
+  const currentWindow = getTauriWindow();
+  if (!currentWindow) return false;
+  const [point, position, size] = await Promise.all([
+    cursorPosition(), currentWindow.outerPosition(), currentWindow.outerSize(),
+  ]);
+  return isPointInsideWindow(point, position, size);
 }
