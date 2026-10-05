@@ -169,6 +169,15 @@ pub async fn wait_for_floating_drag_release() {
     }
 }
 
+fn floating_edge_from_gaps(gaps: [i32; 4], tolerance: i32) -> Option<&'static str> {
+    // A negative gap means part of the window is already beyond this edge.
+    // At a corner, prefer the edge crossed furthest rather than a stale dock.
+    ["left", "right", "top", "bottom"].into_iter().zip(gaps)
+        .filter(|(_, gap)| *gap <= tolerance)
+        .min_by_key(|(_, gap)| *gap)
+        .map(|(edge, _)| edge)
+}
+
 #[tauri::command]
 pub fn resize_floating_usage(
     app: AppHandle,
@@ -198,14 +207,12 @@ pub fn resize_floating_usage(
     let mut dock = if settings.floating_usage_edge_hide { edge.filter(|value| ["left", "right", "top", "bottom"].contains(&value.as_str())) } else { None };
     if detect_edge && settings.floating_usage_edge_hide {
         // Detect against the current physical window bounds, then keep the expanded anchor when collapsing.
-        dock = [
-            ("left", (position.x - left).abs()),
-            ("right", (right - position.x - current_size.width as i32).abs()),
-            ("top", (position.y - top).abs()),
-            ("bottom", (bottom - position.y - current_size.height as i32).abs()),
-        ].into_iter().min_by_key(|(_, distance)| *distance)
-            .filter(|(_, distance)| *distance <= (6.0 * scale).ceil() as i32)
-            .map(|(edge, _)| edge.to_string());
+        dock = floating_edge_from_gaps([
+            position.x - left,
+            right - position.x - current_size.width as i32,
+            position.y - top,
+            bottom - position.y - current_size.height as i32,
+        ], (6.0 * scale).ceil() as i32).map(str::to_string);
     }
     let physical_width = (width.ceil() * scale).ceil() as i32;
     let physical_height = (height.ceil() * scale).ceil() as i32;
@@ -233,6 +240,35 @@ pub fn resize_floating_usage(
     settings.floating_usage_position = Some(FloatingUsagePosition { x: anchor_x, y: anchor_y });
     save_app_settings(&settings).map_err(|error| error.to_string())?;
     Ok(dock)
+}
+
+#[cfg(test)]
+mod floating_edge_tests {
+    use super::floating_edge_from_gaps;
+
+    #[test]
+    fn touching_or_crossing_any_edge_docks_even_when_the_window_center_is_outside() {
+        for (index, edge) in ["left", "right", "top", "bottom"].into_iter().enumerate() {
+            for gap in [0, -1, -100, -300] {
+                let mut gaps = [500; 4];
+                gaps[index] = gap;
+                assert_eq!(floating_edge_from_gaps(gaps, 6), Some(edge));
+            }
+        }
+    }
+
+    #[test]
+    fn moving_inside_beyond_tolerance_undocks() {
+        assert_eq!(floating_edge_from_gaps([500, 6, 500, 500], 6), Some("right"));
+        assert_eq!(floating_edge_from_gaps([500, 7, 500, 500], 6), None);
+        assert_eq!(floating_edge_from_gaps([500; 4], 6), None);
+    }
+
+    #[test]
+    fn corner_prefers_the_edge_crossed_furthest() {
+        assert_eq!(floating_edge_from_gaps([500, -100, -20, 500], 6), Some("right"));
+        assert_eq!(floating_edge_from_gaps([-20, 500, 500, -100], 6), Some("bottom"));
+    }
 }
 
 #[tauri::command]
