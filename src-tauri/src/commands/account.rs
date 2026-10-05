@@ -154,50 +154,59 @@ pub async fn add_account_from_cookie(
     name: String,
     cookie: String,
 ) -> Result<AddedCookieAccount, String> {
-    let cookie = normalize_chatgpt_cookie(&cookie).map_err(|error| error.to_string())?;
-    let session = fetch_chatgpt_cookie_session(&cookie)
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut account = StoredAccount::new_cookie(
-        name,
-        session.email.clone(),
-        session.plan_type.clone(),
-        session.account_id.clone(),
-        cookie,
-    );
-    cache_chatgpt_cookie_session(&account.id, session);
-
-    let usage = match get_account_usage(&account).await {
-        Ok(usage) => usage,
-        Err(error) => {
-            clear_chatgpt_cookie_session(&account.id);
-            return Err(error.to_string());
-        }
-    };
-    if let Some(error) = usage.error.clone() {
-        clear_chatgpt_cookie_session(&account.id);
-        return Err(error);
+    #[cfg(not(windows))]
+    {
+        let _ = (app, name, cookie);
+        return Err("Cookie usage accounts are only supported on Windows".into());
     }
-    account.plan_type = usage.plan_type.clone();
 
-    let stored = match add_account(account) {
-        Ok(stored) => stored,
-        Err(error) => {
-            clear_chatgpt_cookie_session(&usage.account_id);
-            return Err(error.to_string());
+    #[cfg(windows)]
+    {
+        let cookie = normalize_chatgpt_cookie(&cookie).map_err(|error| error.to_string())?;
+        let session = fetch_chatgpt_cookie_session(&cookie)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut account = StoredAccount::new_cookie(
+            name,
+            session.email.clone(),
+            session.plan_type.clone(),
+            session.account_id.clone(),
+            cookie,
+        );
+        cache_chatgpt_cookie_session(&account.id, session);
+
+        let usage = match get_account_usage(&account).await {
+            Ok(usage) => usage,
+            Err(error) => {
+                clear_chatgpt_cookie_session(&account.id);
+                return Err(error.to_string());
+            }
+        };
+        if let Some(error) = usage.error.clone() {
+            clear_chatgpt_cookie_session(&account.id);
+            return Err(error);
         }
-    };
-    let store = load_accounts().map_err(|error| error.to_string())?;
-    let active_id = store.active_account_id.as_deref();
-    #[cfg(desktop)]
-    crate::tray::ingest_usage(&app, vec![usage.clone()]);
-    #[cfg(not(desktop))]
-    let _ = app;
+        account.plan_type = usage.plan_type.clone();
 
-    Ok(AddedCookieAccount {
-        account: AccountInfo::from_stored(&stored, active_id),
-        usage,
-    })
+        let stored = match add_account(account) {
+            Ok(stored) => stored,
+            Err(error) => {
+                clear_chatgpt_cookie_session(&usage.account_id);
+                return Err(error.to_string());
+            }
+        };
+        let store = load_accounts().map_err(|error| error.to_string())?;
+        let active_id = store.active_account_id.as_deref();
+        #[cfg(desktop)]
+        crate::tray::ingest_usage(&app, vec![usage.clone()]);
+        #[cfg(not(desktop))]
+        let _ = app;
+
+        Ok(AddedCookieAccount {
+            account: AccountInfo::from_stored(&stored, active_id),
+            usage,
+        })
+    }
 }
 
 /// Switch to a different account
@@ -433,6 +442,15 @@ fn find_antigravity_processes() -> anyhow::Result<Vec<u32>> {
 }
 
 fn encode_slim_payload_from_store(store: &AccountsStore) -> anyhow::Result<String> {
+    #[cfg(not(windows))]
+    if store
+        .accounts
+        .iter()
+        .any(|account| matches!(&account.auth_data, AuthData::Cookie { .. }))
+    {
+        anyhow::bail!("Cookie usage accounts can only be exported on Windows");
+    }
+
     let active_name = store.active_account_id.as_ref().and_then(|active_id| {
         store
             .accounts
@@ -516,6 +534,11 @@ fn validate_slim_payload(payload: &SlimPayload) -> anyhow::Result<()> {
     let mut names = HashSet::new();
 
     for account in &payload.accounts {
+        #[cfg(not(windows))]
+        if account.auth_type == SLIM_AUTH_COOKIE {
+            anyhow::bail!("Cookie usage accounts are only supported on Windows");
+        }
+
         if account.name.trim().is_empty() {
             anyhow::bail!("Slim import contains an account with empty name");
         }
@@ -817,6 +840,15 @@ fn read_encrypted_file(path: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 fn validate_imported_store(store: &AccountsStore) -> anyhow::Result<()> {
+    #[cfg(not(windows))]
+    if store
+        .accounts
+        .iter()
+        .any(|account| matches!(&account.auth_data, AuthData::Cookie { .. }))
+    {
+        anyhow::bail!("Cookie usage accounts are only supported on Windows");
+    }
+
     let mut ids = HashSet::new();
     let mut names = HashSet::new();
 
@@ -868,21 +900,31 @@ fn merge_accounts_store(
 
     current.version = current.version.max(imported_version).max(1);
 
+    let is_codex_account = |account: &StoredAccount| {
+        !matches!(&account.auth_data, AuthData::Cookie { .. })
+    };
     let current_active_is_valid = current
         .active_account_id
         .as_ref()
-        .is_some_and(|id| current.accounts.iter().any(|a| &a.id == id));
+        .and_then(|id| current.accounts.iter().find(|account| &account.id == id))
+        .is_some_and(is_codex_account);
 
     if !current_active_is_valid {
-        if let Some(imported_active) = imported_active_id {
-            if current.accounts.iter().any(|a| a.id == imported_active) {
-                current.active_account_id = Some(imported_active);
-            } else {
-                current.active_account_id = current.accounts.first().map(|a| a.id.clone());
-            }
-        } else {
-            current.active_account_id = current.accounts.first().map(|a| a.id.clone());
-        }
+        current.active_account_id = imported_active_id
+            .filter(|id| {
+                current
+                    .accounts
+                    .iter()
+                    .find(|account| &account.id == id)
+                    .is_some_and(is_codex_account)
+            })
+            .or_else(|| {
+                current
+                    .accounts
+                    .iter()
+                    .find(|account| is_codex_account(account))
+                    .map(|account| account.id.clone())
+            });
     }
 
     (
@@ -905,4 +947,60 @@ pub async fn get_masked_account_ids() -> Result<Vec<String>, String> {
 #[tauri::command]
 pub async fn set_masked_account_ids(ids: Vec<String>) -> Result<(), String> {
     crate::auth::storage::set_masked_account_ids(ids).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod account_merge_tests {
+    use super::merge_accounts_store;
+    use crate::types::{AccountsStore, StoredAccount};
+
+    fn cookie_account(name: &str) -> StoredAccount {
+        StoredAccount::new_cookie(name.into(), None, None, None, "session=sample".into())
+    }
+
+    fn codex_account(name: &str) -> StoredAccount {
+        StoredAccount::new_api_key(name.into(), "key-sample".into())
+    }
+
+    fn store(accounts: Vec<StoredAccount>, active_account_id: Option<String>) -> AccountsStore {
+        AccountsStore {
+            accounts,
+            active_account_id,
+            ..AccountsStore::default()
+        }
+    }
+
+    #[test]
+    fn cookie_only_import_does_not_create_an_active_codex_account() {
+        let imported = store(vec![cookie_account("Cookie")], None);
+
+        let (merged, _) = merge_accounts_store(AccountsStore::default(), imported);
+
+        assert_eq!(merged.active_account_id, None);
+    }
+
+    #[test]
+    fn import_fallback_skips_cookie_accounts() {
+        let cookie = cookie_account("Cookie");
+        let codex = codex_account("Codex");
+        let codex_id = codex.id.clone();
+        let imported = store(vec![cookie, codex], None);
+
+        let (merged, _) = merge_accounts_store(AccountsStore::default(), imported);
+
+        assert_eq!(merged.active_account_id.as_deref(), Some(codex_id.as_str()));
+    }
+
+    #[test]
+    fn imported_cookie_active_id_is_ignored() {
+        let cookie = cookie_account("Cookie");
+        let cookie_id = cookie.id.clone();
+        let codex = codex_account("Codex");
+        let codex_id = codex.id.clone();
+        let imported = store(vec![cookie, codex], Some(cookie_id));
+
+        let (merged, _) = merge_accounts_store(AccountsStore::default(), imported);
+
+        assert_eq!(merged.active_account_id.as_deref(), Some(codex_id.as_str()));
+    }
 }

@@ -60,7 +60,13 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .map(|settings| settings.floating_usage_enabled)
         .unwrap_or(false)
     {
-        create_floating_usage_window(app)?;
+        if let Err(error) = create_floating_usage_window(app) {
+            eprintln!("Failed to restore floating usage window: {error}");
+            if let Ok(mut settings) = load_app_settings() {
+                settings.floating_usage_enabled = false;
+                let _ = save_app_settings(&settings);
+            }
+        }
     }
 
     let menu = build_menu(app, &load_accounts().unwrap_or_default())?;
@@ -295,8 +301,10 @@ fn create_floating_usage_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result
     let position = saved_position
         .filter(|position| floating_position_is_visible(app, *position))
         .unwrap_or_else(|| default_floating_usage_position(app));
-    window.set_position(position)?;
-    window.show()?;
+    if let Err(error) = window.set_position(position).and_then(|()| window.show()) {
+        let _ = window.close();
+        return Err(error);
+    }
     persist_floating_usage_position(position);
     Ok(())
 }

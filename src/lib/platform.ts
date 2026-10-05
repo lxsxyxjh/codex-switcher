@@ -6,6 +6,10 @@ export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+export function isWindowsPlatform(): boolean {
+  return typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+}
+
 export async function invokeBackend<T>(
   command: string,
   args?: Record<string, unknown>

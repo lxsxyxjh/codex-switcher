@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   describeFileSource,
   isTauriRuntime,
+  isWindowsPlatform,
   openExternalUrl,
   pickAuthJsonFile,
   type FileSource,
@@ -39,6 +40,8 @@ export function AddAccountModal({
   const [copied, setCopied] = useState<boolean>(false);
   const isPrimaryDisabled = loading || (activeTab === "oauth" && oauthPending);
   const tauriRuntime = isTauriRuntime();
+  const windowsPlatform = tauriRuntime && isWindowsPlatform();
+  const tabs: Tab[] = windowsPlatform ? ["oauth", "import", "cookie"] : ["oauth", "import"];
 
   const resetForm = () => {
     setName("");
@@ -138,7 +141,7 @@ export function AddAccountModal({
 
         {/* Tabs */}
         <div className="flex border-b border-gray-100 dark:border-gray-800">
-          {(["oauth", "import", "cookie"] as Tab[]).map((tab) => (
+          {tabs.map((tab) => (
             <button
               key={tab}
               onClick={() => {
@@ -277,7 +280,7 @@ export function AddAccountModal({
                 className="w-full px-3 py-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-gray-400 dark:focus:border-gray-500 focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500"
               />
               <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
-                Stored with Windows user encryption. Cookie accounts only show usage; they cannot switch Codex login or send warm-up requests.
+                Stored encrypted for this Windows user. Cookie accounts only show usage; they cannot switch Codex login or send warm-up requests.
               </p>
             </div>
           )}
