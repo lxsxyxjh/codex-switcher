@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatCreditsBalance, formatQuotaResetTime, formatUsagePercent, formatUsageWindowLabel } from "../src/lib/usageDisplay.ts";
+import { formatCreditsBalance, formatQuotaResetTime, formatUsagePercent, formatUsageWindowLabel, getDisplayedUsageWindows } from "../src/lib/usageDisplay.ts";
+
+test("shows only the quota windows returned, including exhausted free and weekly-only accounts", () => {
+  const monthly = { primary_used_percent: 100, primary_window_minutes: 43200, secondary_used_percent: null, secondary_window_minutes: null };
+  assert.deepEqual(getDisplayedUsageWindows(monthly).map((quota) => [quota.label, formatUsagePercent(quota.used)]), [["30d", "0%"]]);
+  assert.deepEqual(getDisplayedUsageWindows({ ...monthly, primary_used_percent: 20, primary_window_minutes: 300, secondary_used_percent: 30, secondary_window_minutes: 10080 }).map((quota) => quota.label), ["5h", "7d"]);
+  assert.deepEqual(getDisplayedUsageWindows({ ...monthly, primary_used_percent: null, primary_window_minutes: null, secondary_used_percent: 100, secondary_window_minutes: 10080 }).map((quota) => [quota.label, formatUsagePercent(quota.used)]), [["7d", "0%"]]);
+  assert.deepEqual(getDisplayedUsageWindows(undefined), []);
+});
 
 test("formats zero and adds thousands separators to credit balances", () => {
   assert.equal(formatCreditsBalance("0"), "0");

@@ -1,3 +1,15 @@
+import type { UsageInfo } from "../types";
+
+export function getDisplayedUsageWindows(usage: Pick<UsageInfo, "primary_used_percent" | "primary_window_minutes" | "secondary_used_percent" | "secondary_window_minutes"> | undefined) {
+  if (!usage) return [];
+  return [
+    { key: "primary", minutes: usage.primary_window_minutes, used: usage.primary_used_percent, fallback: "5h" },
+    { key: "secondary", minutes: usage.secondary_window_minutes, used: usage.secondary_used_percent, fallback: "7d" },
+  ].flatMap(({ key, minutes, used, fallback }) => typeof used === "number" && Number.isFinite(used)
+    ? [{ key, label: formatUsageWindowLabel(minutes, fallback), used }]
+    : []);
+}
+
 export function formatUsagePercent(used: number | null | undefined, showUsed = false): string {
   if (used === null || used === undefined || !Number.isFinite(used)) return "--";
   return `${Math.round(Math.max(0, Math.min(100, showUsed ? used : 100 - used)))}%`;
