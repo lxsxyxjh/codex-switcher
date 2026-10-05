@@ -121,7 +121,6 @@ pub fn run() {
             open_main_window,
             quit_app,
             get_cached_usage,
-            commands::get_next_usage_refresh_at,
             commands::get_codex_auth_path,
             commands::get_floating_usage_options,
             commands::set_usage_refresh_interval,

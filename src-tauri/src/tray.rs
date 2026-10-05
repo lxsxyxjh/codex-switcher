@@ -45,20 +45,8 @@ const TRAY_HEIGHT: f64 = 420.0;
 const FLOATING_USAGE_WIDTH: f64 = 260.0;
 const FLOATING_USAGE_HEIGHT: f64 = 48.0;
 static USAGE_REFRESH_SECONDS: AtomicU64 = AtomicU64::new(300);
-static NEXT_USAGE_REFRESH_AT: AtomicU64 = AtomicU64::new(0);
-
-pub fn next_usage_refresh_at() -> u64 {
-    NEXT_USAGE_REFRESH_AT.load(Ordering::Acquire)
-}
-
-fn update_next_usage_refresh(seconds: u64) {
-    let next = if seconds == 0 { 0 } else { chrono::Utc::now().timestamp() as u64 + seconds };
-    NEXT_USAGE_REFRESH_AT.store(next, Ordering::Release);
-}
-
 pub fn set_usage_refresh_interval(seconds: u64) {
     USAGE_REFRESH_SECONDS.store(seconds, Ordering::Release);
-    update_next_usage_refresh(seconds);
 }
 const ACCOUNT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
@@ -535,7 +523,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, store: &AccountsStore) -> tauri::R
         .build(app)?)?;
     let interval = load_app_settings().unwrap_or_default().usage_refresh_interval_seconds;
     let refresh_menu = Submenu::new(app, "额度自动刷新", true)?;
-    for (seconds, label) in [(30, "每 30 秒"), (60, "每 1 分钟"), (120, "每 2 分钟"), (300, "每 5 分钟（默认）"), (600, "每 10 分钟"), (0, "关闭自动刷新")] {
+    for (seconds, label) in [(30, "每 30 秒"), (60, "每 1 分钟"), (120, "每 2 分钟"), (300, "每 5 分钟（默认）"), (600, "每 10 分钟")] {
         refresh_menu.append(&CheckMenuItemBuilder::with_id(format!("usage-refresh:{seconds}"), label).checked(interval == seconds).build(app)?)?;
     }
     menu.append(&refresh_menu)?;
@@ -748,7 +736,7 @@ fn usage_tooltip(usage: Option<&UsageInfo>) -> String {
             .unwrap_or_else(|| value.to_string())
     }).unwrap_or_else(|| "--".into());
     let seconds = load_app_settings().unwrap_or_default().usage_refresh_interval_seconds;
-    let status = if usage.error.is_some() { "刷新失败，保留上次数据".into() } else if seconds == 0 { "自动刷新已关闭".into() } else { format!("每 {seconds} 秒自动刷新") };
+    let status = if usage.error.is_some() { "刷新失败，保留上次数据".into() } else { format!("每 {seconds} 秒更新额度数据") };
     format!("Codex Switcher\n剩余 {windows} · 余额 {credits}\n{status}")
 }
 
@@ -958,11 +946,9 @@ fn poll_active_account_usage<R: Runtime>(app: AppHandle<R>) {
         if current != interval {
             interval = current;
             last_refresh = Instant::now();
-            update_next_usage_refresh(interval);
         }
-        if interval == 0 || last_refresh.elapsed() < Duration::from_secs(interval) { continue; }
+        if last_refresh.elapsed() < Duration::from_secs(interval) { continue; }
         last_refresh = Instant::now();
-        update_next_usage_refresh(interval);
         let Ok(store) = load_accounts() else {
             continue;
         };

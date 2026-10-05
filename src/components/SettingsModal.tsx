@@ -165,7 +165,7 @@ export function SettingsModal({
             <select id="usage-refresh-interval" className={selectClassName} disabled={saving} value={floating.usage_refresh_interval_seconds} onChange={(event) => void changeRefreshInterval(Number(event.target.value))}>
               {usageRefreshIntervals.map(({ seconds, label }) => <option key={seconds} value={seconds}>{label}</option>)}
             </select>
-            <p className="text-xs text-gray-500">主界面显示时刷新所有账户，隐藏时刷新当前显示账户。所有窗口同步更新；关闭自动刷新后仍可手动刷新。</p>
+            <p className="text-xs text-gray-500">此间隔用于获取最新额度，不改变 Codex 的额度重置时间。主界面显示时更新所有账户，隐藏时更新当前显示账户。</p>
             <label className="text-sm font-medium"><input type="checkbox" checked={floating.floating_usage_enabled} disabled={saving} onChange={(event) => void changeFloating({ enabled: event.target.checked })} /> 桌面悬浮额度窗</label>
             <label htmlFor="floating-layout" className="text-sm">悬浮窗排列方式</label>
             <select id="floating-layout" className={selectClassName} disabled={saving} value={String(floating.floating_usage_vertical)} onChange={(event) => void changeFloating({ vertical: event.target.value === "true" })}>

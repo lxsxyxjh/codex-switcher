@@ -106,8 +106,11 @@ pub fn load_app_settings() -> Result<AppSettings> {
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read settings file: {}", path.display()))?;
 
-    let settings: AppSettings = serde_json::from_str(&content)
+    let mut settings: AppSettings = serde_json::from_str(&content)
         .with_context(|| format!("Failed to parse settings file: {}", path.display()))?;
+    if ![30, 60, 120, 300, 600].contains(&settings.usage_refresh_interval_seconds) {
+        settings.usage_refresh_interval_seconds = 300;
+    }
 
     Ok(settings)
 }

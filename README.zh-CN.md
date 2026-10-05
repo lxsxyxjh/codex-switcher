@@ -1,110 +1,71 @@
-<p align="center">
-  <img src="src-tauri/icons/logo.svg" alt="Codex Switcher" width="96">
-</p>
-
 # Codex Switcher — Windows 增强版
 
-一个轻量的桌面工具，用来查看 Codex 额度和 Credits 余额。开启悬浮条后，工作时也能随时看到额度。
+一个查看 Codex 额度和 Credits 余额的 Windows 工具，支持常驻桌面的悬浮窗。程序界面使用中文。
 
-[English](README.md) | **简体中文**
+[English](README.md) | 简体中文
 
 ## 项目来源
 
-本版本修改自 **[Lampese](https://github.com/Lampese)** 及其贡献者开发的 **[Codex Switcher](https://github.com/Lampese/codex-switcher)**。
+修改自 [Lampese](https://github.com/Lampese) 及其贡献者开发的 [Codex Switcher](https://github.com/Lampese/codex-switcher)。账户管理、登录、Codex 切换、额度请求和 Tauri 基础来自原项目。本版本增加下面的 Windows 功能，保留原作者署名和许可证。
 
-原项目提供了账户管理、ChatGPT 登录、Codex 账户切换、额度请求和 Tauri 应用基础。本版本在这些已有功能上，主要改进 Windows 的额度显示和日常操作。原项目的开发成果归功于原作者及贡献者。
+## 本版本的功能
 
-本版本主要面向 **Windows x64**，Windows 界面目前使用中文。新增悬浮窗和 Cookie 账户功能仅支持 Windows。
+- 小型、可拖动、置顶的额度悬浮窗，显示 Credits 余额。
+- 横排、竖排、贴边隐藏、50%–200% 缩放、已用／剩余百分比。
+- 鼠标悬浮时显示各周期的额度重置时间。根据账户实际数据显示 5h、7d、30d；没有的周期不显示，额度为 0 时正常显示。
+- 可选择悬浮窗展示的账户，不改变 Codex 的实际登录。
+- 支持导入 Codex 登录文件、ChatGPT 登录和 Cookie 输入框。
+- 默认每 5 分钟获取最新额度，设置、悬浮窗右键、托盘右键可选 30 秒、1、2、5、10 分钟。这是获取数据的间隔，不是 Codex 重置额度的周期。
+- 手动更新后，主界面、悬浮窗和托盘同步显示；网络失败保留上次成功数据。
+- 关闭主界面后留在托盘；托盘右键“退出程序”才彻底退出。重启后恢复悬浮窗设置。
 
-## 本版本增加了什么
+## 使用方法
 
-- **桌面悬浮额度条：**不用打开主界面，也能查看 5 小时额度、每周额度和 Credits 余额。
-- **简单的右键操作：**选择显示账户、调整大小、切换已用／剩余百分比、打开主界面、关闭悬浮窗。
-- **横排／竖排与贴边隐藏：**可以选择横向额度条，或标题与数值分行的竖排。开启贴边隐藏后，拖到屏幕边缘会缩成小标签，鼠标移入展开，拖离边缘恢复普通悬浮窗。
-- **自动记住设置：**重启后恢复悬浮窗的位置、开关、缩放比例和显示方式。
-- **Cookie 账户：**可以直接粘贴 ChatGPT 浏览器 Cookie 查看额度，与文件导入、ChatGPT 登录并列。
-- **共用额度数据：**启动时刷新，默认每 **5 分钟**更新。设置、悬浮窗右键、托盘右键都可选择 30 秒、1、2、5、10 分钟，或关闭自动刷新；重启后保留选择。手动刷新立即同步所有显示。网络失败时保留上次成功数据。
-- **简化账户操作：**文件导入排第一，ChatGPT 登录排第二，Cookie 排第三。自动识别账户名称，文件操作只保留“导入”和“导出”。
-- **关闭后继续运行：**主界面关闭后留在托盘；再次启动只打开已有窗口，不启动第二份程序。
-- **直接生成 exe：**本地构建无需制作安装包，也不需要 updater 签名。
+1. 从[本仓库的 Releases](../../releases)下载 `codex-switcher.exe`，放到长期保留的文件夹，双击运行。
+2. 点击 **账户 → 添加账户**。
+3. 在设置或托盘右键菜单开启 **悬浮额度窗**。
+4. 右键悬浮窗调整显示方式，点击悬浮窗刷新按钮获取最新额度。
 
-原有 Codex 登录账户的切换和预热功能继续保留。
+需要 Windows x64 和 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。可以自行为 exe 创建桌面快捷方式。
 
-## 第一次使用
+| 添加方式 | 支持的操作 |
+| --- | --- |
+| Codex `auth.json` 文件 | 查看额度、切换 Codex 登录、预热 |
+| ChatGPT 浏览器登录 | 查看额度、切换 Codex 登录、预热 |
+| ChatGPT Cookie | 查看额度 |
 
-1. 从**[本仓库的 Releases 页面](../../releases)**下载 `codex-switcher.exe`。
-2. 放到一个准备长期保留的文件夹，双击运行。需要时可以自己创建桌面快捷方式。
-3. 点击右上角 **账户 → 添加账户**，选择下面的一种方式。
-4. 想马上更新额度时，点击刷新按钮。
+文件选择器默认定位到 `%USERPROFILE%\.codex\auth.json`；设置了 `CODEX_HOME` 时使用该目录下的 `auth.json`。同一个账户通过 Cookie 和 Codex 登录添加时分别保存；同一种方式重复导入会更新已有记录。
 
-程序界面需要 Microsoft Edge WebView2 Runtime。如果电脑没有安装，可从 [Microsoft 官方页面](https://developer.microsoft.com/microsoft-edge/webview2/)安装。
+**刷新额度**只是获取使用情况。**预热账户**会发送一个小型 Codex 请求，可能消耗额度；这是可选功能，Cookie 账户不支持。
 
-### 如何添加账户
+**余额**使用现有 ChatGPT/Codex Usage Credits 数据，不是重置次数、Token 数或 API 账单。账户备份使用 **账户 → 导出／导入**。
 
-| 方式 | 需要准备什么 | 支持什么 |
-| --- | --- | --- |
-| 导入登录文件 | Codex 已有的 `auth.json` | 查看额度、切换 Codex 登录、预热 |
-| ChatGPT 登录 | 在浏览器里完成登录 | 查看额度、切换 Codex 登录、预热 |
-| Cookie | 将 ChatGPT 浏览器 Cookie 粘贴到输入框 | 查看额度，不切换 Codex 登录，不发送预热请求 |
+## 打包和发布
 
-文件选择框默认定位到 `%USERPROFILE%\.codex\auth.json`。如果设置了 `CODEX_HOME`，则定位到该目录下的 `auth.json`。
+准备 Node.js 22.12 或更新版本、pnpm、Rust，以及包含 **使用 C++ 的桌面开发**工作负载的 Visual Studio C++ Build Tools。
 
-同一个账户通过 Cookie 和 Codex 登录添加时，会分别保存，并在账户卡片上标明登录方式。用同一种方式重复添加，会更新凭证，保留原来的账户记录。
-
-## 如何使用悬浮窗
-
-右键点击 Windows 时钟附近的托盘图标，勾选 **悬浮额度窗**。也可以在主界面 **菜单 → 设置**中开启。
-
-悬浮窗只显示三项：
-
-```text
-5h 剩余 86% | 7d 剩余 72% | 余额 1,011
-```
-
-- **5h／7d：**默认显示剩余百分比，也可以右键切换成已用百分比。
-- **余额：**现有 ChatGPT/Codex Usage 接口返回的 Credits 余额，与手动重置次数、Token 数、API 账单不同。
-- **`--`：**没有对应数据。30 天等其他周期不会错误地显示成 5 小时或每周额度，其他周期请在主界面查看。
-
-悬浮窗保持置顶，可以拖动，采用紧凑的灰蓝色样式，支持 **50%–200%** 缩放。选择“显示账户”只改变悬浮窗展示的内容，不会切换 Codex 的实际登录。
-
-## 关闭窗口和退出程序
-
-- **主界面右上角 ×：**隐藏主界面，保留托盘、悬浮窗和自动刷新。
-- **左键点击托盘图标：**重新打开主界面。
-- **鼠标停在托盘图标上：**查看额度和余额提示。
-- **托盘右键 → 退出程序：**彻底退出，悬浮窗也一起关闭。
-
-托盘提示跟随额度数据更新。本版本没有增加嵌入 Windows 任务栏的常驻文字面板。
-
-## 导入和导出
-
-点击 **账户 → 导出**保存账户备份文件；点击 **账户 → 导入**恢复备份。已有账户会保留，重复记录会跳过。
-
-本地保存的 Cookie 凭证使用当前 Windows 用户进行保护。导入备份后，恢复的凭证会重新保存到当前 Windows 用户下。
-
-## 从源码构建
-
-这一部分供开发者使用。普通用户下载 exe 即可。
-
-准备 Node.js **22.12 或更新版本**、pnpm、Rust，以及包含 **使用 C++ 的桌面开发**工作负载的 Visual Studio C++ Build Tools。下载或克隆**本仓库**，在项目目录打开 PowerShell：
+在项目目录打开 PowerShell：
 
 ```powershell
-pnpm install
+pnpm install --frozen-lockfile
 pnpm tauri:win:exe
 ```
 
-生成文件：
+已有打包脚本 `scripts/build-windows.ps1`，会加载 Visual Studio 编译环境，编译 TypeScript、Rust 和 Windows Release exe，并复用编译缓存。只生成 exe，不生成安装包或更新签名，不需要 `TAURI_SIGNING_PRIVATE_KEY`。
+
+生成位置：
 
 ```text
 src-tauri/target/exe-only/release/codex-switcher.exe
 ```
 
-构建脚本会加载本机 Visual Studio 编译环境，并复用构建缓存。仅生成 exe 不需要配置 `TAURI_SIGNING_PRIVATE_KEY`。
+发版步骤：
 
-开发调试使用 `pnpm tauri:win dev`。其他平台代码继承自上游，本次 Windows 修改不代表 macOS 或 Linux 版本已经通过测试。
+1. 需要调整版本号时，先执行 `pnpm version:patch`，检查版本文件变化，再编译。
+2. 打开生成的 exe，确认登录、额度显示和悬浮窗正常。
+3. 在自己的 GitHub 仓库创建 Release，上传 `codex-switcher.exe`。用户无需下载源码或编译缓存。
+4. 保留原作者署名和许可证，不上传本地账户配置或凭证。
 
-### 发布自己的版本
+继承的更新器仍指向 Lampese 原项目。当前建议通过 Release 手动下载 exe 更新；要提供本分支的自动更新，需要配置自己的更新地址和签名密钥。原有发布自动化不属于上述只打包 exe 的流程。
 
-将编译好的 exe 上传到**自己的仓库**的 Release，并保留前面的原作者署名。
-
-继承的自动更新配置目前仍指向 **Lampese 原项目的 Release**。如果要给本版本提供自动更新，需要另行配置自己的更新地址和签名密钥。只上传 exe 供用户下载，不需要 updater 签名。
+开发调试使用 `pnpm tauri:win dev`。本版本面向 Windows，未验证本分支的 macOS 和 Linux 构建。

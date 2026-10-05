@@ -40,14 +40,6 @@ pub fn get_cached_usage() -> Vec<UsageInfo> {
 }
 
 #[tauri::command]
-pub fn get_next_usage_refresh_at() -> u64 {
-    #[cfg(desktop)]
-    { crate::tray::next_usage_refresh_at() }
-    #[cfg(not(desktop))]
-    { 0 }
-}
-
-#[tauri::command]
 pub fn get_floating_usage_enabled() -> Option<bool> {
     #[cfg(target_os = "windows")]
     {
@@ -118,7 +110,7 @@ pub fn get_floating_usage_options() -> Result<AppSettings, String> {
 
 #[tauri::command]
 pub fn set_usage_refresh_interval(app: AppHandle, seconds: u64) -> Result<(), String> {
-    if ![0, 30, 60, 120, 300, 600].contains(&seconds) {
+    if ![30, 60, 120, 300, 600].contains(&seconds) {
         return Err("请选择有效的自动刷新间隔".into());
     }
     let mut settings = load_app_settings().map_err(|error| error.to_string())?;

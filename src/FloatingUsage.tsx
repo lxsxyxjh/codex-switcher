@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AccountInfo, UsageInfo } from "./types";
 import { invokeBackend, isTauriRuntime } from "./lib/platform";
 import { getTauriWindow, isCursorInsideWindow } from "./lib/tauriWindow";
-import { formatCreditsBalance, formatUsagePercent, getDisplayedUsageWindows, mergeUsageUpdate, usageRefreshIntervals } from "./lib/usageDisplay";
+import { formatCreditsBalance, formatQuotaResetTime, formatUsagePercent, getDisplayedUsageWindows, mergeUsageUpdate, usageRefreshIntervals } from "./lib/usageDisplay";
 import {
   applyTheme,
   syncThemeFromStorage,
@@ -42,18 +42,7 @@ function FloatingUsage() {
   const [dragging, setDragging] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [refreshHint, setRefreshHint] = useState("正在读取刷新时间…");
-  const loadRefreshHint = useCallback(async () => {
-    try {
-      const next = await invokeBackend<number>("get_next_usage_refresh_at");
-      setRefreshHint(next === 0 ? "自动刷新已关闭" : next * 1000 <= Date.now()
-        ? "自动刷新即将进行"
-        : `下次自动刷新：${new Date(next * 1000).toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}`);
-    } catch (error) {
-      setRefreshHint("暂时无法读取刷新时间");
-      console.error("Failed to read usage refresh schedule:", error);
-    }
-  }, []);
+  const [hoverTime, setHoverTime] = useState(Date.now);
   const menuRef = useRef<import("@tauri-apps/api/menu").Menu | null>(null);
   const [options, setOptions] = useState<FloatingOptions>({ usage_refresh_interval_seconds: 300, floating_usage_enabled: false, floating_usage_scale: 100, floating_usage_account_id: null, floating_usage_show_used: false, floating_usage_vertical: false, floating_usage_edge_hide: false, floating_usage_edge: null });
   const loadOptions = useCallback(async () => {
@@ -117,7 +106,6 @@ function FloatingUsage() {
       const { listen } = await import("@tauri-apps/api/event");
       unlistenUsage = await listen<UsageInfo[]>(USAGE_UPDATED_EVENT, ({ payload }) => {
         applyUsageUpdates(payload);
-        void loadRefreshHint();
       });
       unlistenAccounts = await listen(ACCOUNTS_CHANGED_EVENT, () => {
         void loadAccounts();
@@ -127,7 +115,7 @@ function FloatingUsage() {
         if (payload === "light" || payload === "dark") applyTheme(payload);
       });
 
-      unlistenSettings = await listen("app-settings-changed", () => { void loadOptions(); void loadCachedUsage(); void loadRefreshHint(); });
+      unlistenSettings = await listen("app-settings-changed", () => { void loadOptions(); void loadCachedUsage(); });
       const currentWindow = getTauriWindow();
       if (currentWindow) {
         unlistenMoved = await currentWindow.onMoved(() => {
@@ -268,9 +256,13 @@ function FloatingUsage() {
   };
   const scale = options.floating_usage_scale / 100;
   const mode = options.floating_usage_show_used ? "已用" : "剩余";
+  const resetHint = usageWindows.map((quota) => {
+    const resetAt = quota.key === "primary" ? usage?.primary_resets_at : usage?.secondary_resets_at;
+    return `${quota.label} 额度重置：${formatQuotaResetTime(resetAt, hoverTime) || "暂无重置时间"}`;
+  }).join("\n") || "暂无额度重置时间";
   return (
     <div onMouseEnter={() => {
-      void loadRefreshHint();
+      setHoverTime(Date.now());
       window.clearTimeout(hoverLeaveTimer.current);
       hoverLeaveTimer.current = undefined;
       setHovered(true);
@@ -289,7 +281,7 @@ function FloatingUsage() {
       }, 100);
       hoverLeaveTimer.current = timer;
     }}>
-    {collapsed && <div title={refreshHint} className="grid place-items-center rounded-lg border border-slate-400 bg-slate-200 text-xs text-slate-600 dark:bg-slate-700 dark:text-slate-200" style={{ width: tabWidth, height: tabHeight }} onContextMenu={(event) => { event.preventDefault(); void showContextMenu().catch(console.error); }}>{edge === "left" ? "›" : edge === "right" ? "‹" : edge === "top" ? "⌄" : "⌃"}</div>}
+    {collapsed && <div title={resetHint} className="grid place-items-center rounded-lg border border-slate-400 bg-slate-200 text-xs text-slate-600 dark:bg-slate-700 dark:text-slate-200" style={{ width: tabWidth, height: tabHeight }} onContextMenu={(event) => { event.preventDefault(); void showContextMenu().catch(console.error); }}>{edge === "left" ? "›" : edge === "right" ? "‹" : edge === "top" ? "⌄" : "⌃"}</div>}
     <div ref={barRef}
       onContextMenu={(event) => { event.preventDefault(); void showContextMenu().catch(console.error); }}
       onMouseDown={(event) => { if (event.button === 0 && currentWindow) {
@@ -315,13 +307,13 @@ function FloatingUsage() {
           }
         })().catch(console.error);
       } }}
-      title={`${displayAccount?.name ?? "未添加账户"}\n${refreshHint}${isStale ? "\n刷新失败，保留上次成功数据" : ""}\n右键设置`}
+      title={`${displayAccount?.name ?? "未添加账户"}\n${resetHint}${isStale ? "\n刷新失败，保留上次成功数据" : ""}\n右键设置`}
       className="select-none border border-slate-300/80 bg-slate-100/95 text-slate-600 dark:border-slate-600/80 dark:bg-slate-800/95 dark:text-slate-200"
       style={{ display: "inline-grid", position: collapsed ? "absolute" : "relative", visibility: collapsed ? "hidden" : "visible", pointerEvents: collapsed ? "none" : "auto", gridTemplateColumns: options.floating_usage_vertical ? "max-content auto" : `repeat(${usageWindows.length + 2}, max-content)`, alignItems: "center", width: "max-content", gap: 10 * scale, padding: `${8 * scale}px ${10 * scale}px`, fontSize: 12 * scale, lineHeight: 1.5, borderRadius: 10 * scale }}
     >
       {usageWindows.map((quota) => <span key={quota.key} className="whitespace-nowrap tabular-nums" style={{ gridColumn: options.floating_usage_vertical ? 1 : undefined }}>{quota.label} {mode}{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatUsagePercent(quota.used, options.floating_usage_show_used)}</b></span>)}
       <span className="whitespace-nowrap tabular-nums" style={{ gridColumn: options.floating_usage_vertical ? 1 : undefined }}>{isStale && <span className="text-amber-500">• </span>}余额{options.floating_usage_vertical ? ":" : " "} <b style={{ display: options.floating_usage_vertical ? "block" : "inline" }}>{formatCreditsBalance(usage?.credits_balance)}</b></span>
-      <button type="button" aria-label="刷新当前账户额度" title={refreshing ? "正在刷新额度…" : `立即刷新\n${refreshHint}`}
+      <button type="button" aria-label="刷新当前账户额度" title={refreshing ? "正在刷新额度…" : "立即更新额度数据"}
         disabled={refreshing || !displayAccount}
         onMouseDown={(event) => event.stopPropagation()}
         onClick={() => { void refreshUsage().catch(console.error); }}

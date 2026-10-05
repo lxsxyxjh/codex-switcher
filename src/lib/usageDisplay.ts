@@ -70,5 +70,4 @@ export const usageRefreshIntervals = [
   { seconds: 120, label: "每 2 分钟" },
   { seconds: 300, label: "每 5 分钟（默认）" },
   { seconds: 600, label: "每 10 分钟" },
-  { seconds: 0, label: "关闭自动刷新" },
 ];
