@@ -1,71 +1,91 @@
-# Codex Switcher — Windows Edition
+# Codex Switcher — Codex Usage & Credits Monitor for Windows
 
-A small Windows app for checking Codex quota and Credits, with a desktop floating bar. The app interface is in Chinese.
+**Check your remaining Codex quota, Credits balance, and quota reset times in a small Windows desktop floating widget.** Supports multiple accounts, Codex `auth.json`, ChatGPT login, and Cookie input.
 
-English | [简体中文](README.zh-CN.md)
+Codex 额度查询与桌面悬浮窗：查看剩余额度、Credits 余额，以及 5 小时、7 天、30 天额度重置时间，支持多账户和 Cookie 登录。
 
-## Original project
+English | [简体中文](README.zh-CN.md) | [Download Windows exe](../../releases)
 
-Based on [Codex Switcher](https://github.com/Lampese/codex-switcher), created by [Lampese](https://github.com/Lampese) and its contributors. Account management, login, Codex switching, usage requests, and the Tauri foundation come from the original project. This fork adds the Windows features below and keeps the original author attribution and license.
+## What can you monitor?
 
-## Features in this fork
-
-- A compact, draggable, always-on-top quota bar with Credits.
-- Horizontal or vertical layout, edge hiding, 50%–200% scaling, and used/remaining percentages.
-- Hover to see when each quota period resets. Actual periods are shown: 5h, 7d, or 30d, depending on the account. Missing periods are omitted; zero remains visible.
-- Choose the account displayed in the bar without changing the Codex login.
-- Add accounts through a Codex login file, ChatGPT login, or a Cookie input box.
-- Shared quota updates every 5 minutes by default. Choose 30 seconds, 1, 2, 5, or 10 minutes in Settings or the floating bar / tray context menu. This changes how often data is fetched, not when Codex resets quota.
-- Manual refresh synchronizes the main window, floating bar, and tray. Failed requests keep the last successful values.
-- Closing the main window keeps the app running; tray Quit exits it completely. Floating preferences are saved across restarts.
-
-## Use the app
-
-1. Download `codex-switcher.exe` from [this repository's Releases](../../releases), place it in a permanent folder, and open it.
-2. Select **账户 → 添加账户** to add an account.
-3. Enable **悬浮额度窗** in Settings or the tray context menu.
-4. Right-click the floating bar to adjust it. Its refresh button fetches the latest quota.
-
-Windows x64 and [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) are required. You can create a desktop shortcut to the exe.
-
-| Account method | Supported actions |
+| Feature | What you see |
 | --- | --- |
-| Codex `auth.json` | Check quota, switch Codex login, warm up |
-| ChatGPT browser login | Check quota, switch Codex login, warm up |
-| ChatGPT Cookie | Check quota only |
+| Codex remaining quota | Remaining or used percentages for the account's actual 5-hour, 7-day / weekly, or 30-day quota windows |
+| Codex Credits balance | The remaining ChatGPT/Codex Usage credit balance, including zero and fractional values |
+| Quota reset time | Hover over the floating widget to see each window's reset date, local time, and approximate countdown |
+| Multiple Codex accounts | View several accounts in the main window and choose which account appears in the floating widget |
+| Desktop widget and system tray | An always-on-top, draggable quota overlay and a tray tooltip with the same usage data |
 
-The file picker starts at `%USERPROFILE%\.codex\auth.json`, or `auth.json` under `CODEX_HOME` if configured. Cookie and Codex login records for the same account are kept separately; reimporting through the same method updates that record.
+Only quota periods returned for the account are shown. Missing periods are omitted; an exhausted quota displays **0%**. Credits are separate from manual reset credits, token counts, and API billing.
 
-**Refresh quota** fetches usage data. **Warm up** sends a small Codex request and can consume quota; it is optional and unavailable for Cookie accounts.
+## Why use this Windows quota monitor?
 
-The **余额** value is the existing ChatGPT/Codex Usage Credits balance, not reset credits, token counts, or API billing. Use **账户 → 导出 / 导入** for account backups.
+- Keep Codex usage limits visible while coding, without repeatedly opening the usage page.
+- Use a compact horizontal bar or vertical layout, with edge hiding and 50%–200% scaling.
+- Check quota through a Cookie input box, or keep using your existing Codex login.
+- Choose the displayed account without changing the account signed into Codex.
+- Fetch the latest usage automatically every 5 minutes by default; choose 30 seconds, 1, 2, 5, or 10 minutes in Settings or either context menu.
+- Refresh manually from the widget. The main window, floating widget, and tray share the same quota updates; failed requests retain the last successful values.
+- Restore the widget's position and preferences after restarting. Closing the main window keeps the app in the tray.
 
-## Build and publish
+## Download and start
 
-Prerequisites: Node.js 22.12 or newer, pnpm, Rust, and Visual Studio C++ Build Tools with **Desktop development with C++**.
+1. Download `codex-switcher.exe` from [Releases](../../releases), place it in a permanent folder, and open it.
+2. Select **账户 → 添加账户** (Account → Add account).
+3. Enable **悬浮额度窗** (Floating quota widget) in Settings or the tray context menu.
+4. Drag the widget to your preferred location. Right-click it for account, layout, scaling, and refresh settings.
 
-Open PowerShell in the repository:
+Requires Windows x64 and [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/). The app interface is currently in Chinese.
+
+## Account methods
+
+| Method | Quota and Credits | Switch Codex login / warm up |
+| --- | --- | --- |
+| Import Codex `auth.json` | Yes, when returned for the account | Yes |
+| ChatGPT browser login | Yes, when returned for the account | Yes |
+| Paste ChatGPT Cookie | Yes, when returned for the account | No; quota viewing only |
+
+The file picker starts at `%USERPROFILE%\.codex\auth.json`, or under `CODEX_HOME` if configured. Each Cookie account can have its own credentials. Cookie and Codex login records for the same account remain separate; adding the same account through the same method updates its existing record.
+
+Use **账户 → 导出 / 导入** to back up or restore accounts. Left-click the tray icon to reopen the main window; **退出程序** (Quit) in the tray context menu exits the whole app.
+
+## Common questions
+
+### How do I check how much Codex quota is left?
+
+Add an account and read its remaining percentages in the main window or floating widget. The widget supports 5-hour, weekly, and 30-day limits when those windows are returned for your account. Displayed windows depend on the account's plan and usage response.
+
+### When does my Codex 5-hour or weekly quota reset?
+
+Hover over the floating widget to see the reset time for each displayed quota period. The automatic refresh interval only controls fetching new usage data; it does not change OpenAI's quota reset schedule.
+
+### Can I check Codex Credits using a Cookie?
+
+Yes. Paste the ChatGPT Cookie into the Cookie input box when adding an account. Cookie accounts can display quota and Credits without changing the Codex login. They cannot switch the CLI login or send warm-up requests.
+
+### Does refreshing consume quota?
+
+Refreshing fetches usage data; it does not send a Codex generation request. **Warm up** is a separate, optional action that sends a small Codex request and may consume quota.
+
+## Build a Windows exe
+
+Install Node.js 22.12 or newer, pnpm, Rust, and Visual Studio C++ Build Tools with **Desktop development with C++**. In the repository folder:
 
 ```powershell
 pnpm install --frozen-lockfile
 pnpm tauri:win:exe
 ```
 
-The existing script, `scripts/build-windows.ps1`, loads the Visual Studio build environment and builds TypeScript, Rust, and the Windows Release exe. It reuses the build cache and does not create installers or updater signatures. No `TAURI_SIGNING_PRIVATE_KEY` is needed.
-
-Output:
+The script `scripts/build-windows.ps1` builds the frontend and Windows Release executable:
 
 ```text
 src-tauri/target/exe-only/release/codex-switcher.exe
 ```
 
-To publish:
+No installer or updater signing key is required. To publish, optionally bump the version with `pnpm version:patch` before building, check the exe, and upload it to your own GitHub Release. The inherited updater still targets the original repository; use manual exe downloads unless you configure your own update service. Development: `pnpm tauri:win dev`.
 
-1. If changing the version, run `pnpm version:patch` before building and review the resulting version changes.
-2. Build, then open the generated exe and check login, quota, and the floating bar.
-3. Create a GitHub Release in your own repository and upload `codex-switcher.exe`. Users do not need the source folder or build cache.
-4. Retain the original author attribution and license. Do not upload local account files or credentials.
+## Original project and scope
 
-The inherited updater still targets Lampese's releases. Distribute this fork through manual exe downloads unless you configure your own update endpoint and signing keys. The inherited release automation is not the exe-only publishing workflow above.
+Based on [Codex Switcher](https://github.com/Lampese/codex-switcher), created by [Lampese](https://github.com/Lampese) and its contributors. Account management, login, Codex switching, usage requests, and the Tauri foundation come from the original project. This fork adds the Windows floating quota widget, Cookie account input, synchronized Credits display, and simplified controls.
 
-Development: `pnpm tauri:win dev`. These changes target Windows; macOS and Linux have not been validated for this fork.
+This is a community project, not an official OpenAI application. These changes target Windows; this fork's macOS and Linux builds have not been validated.
