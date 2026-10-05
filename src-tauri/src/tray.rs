@@ -14,14 +14,14 @@ use tauri::{
 
 use crate::{
     api::usage::get_account_usage,
-    auth::{
-        get_account, get_accounts_file, load_accounts, load_app_settings, save_app_settings,
-    },
+    auth::{get_accounts_file, load_accounts, load_app_settings, save_app_settings},
     commands::{
         is_codex_running_switch_block, restore_main_window, switch_account_by_id,
         window::{FLOATING_USAGE_WINDOW, TRAY_WINDOW},
     },
-    types::{AccountsStore, FloatingUsagePosition, TrayDisplayMode, UsageInfo},
+    types::{
+        AccountsStore, AuthData, FloatingUsagePosition, StoredAccount, TrayDisplayMode, UsageInfo,
+    },
 };
 
 static TRAY_USAGE: LazyLock<Mutex<HashMap<String, UsageInfo>>> =
@@ -820,14 +820,37 @@ fn modified_at(path: &std::path::Path) -> Option<std::time::SystemTime> {
         .ok()
 }
 
-/// Poll the active account's usage so the tray title stays fresh even when the
-/// main window's webview poller is hidden or suspended by the OS.
+fn account_for_usage_poll(store: AccountsStore) -> Option<StoredAccount> {
+    let active_account = store
+        .active_account_id
+        .as_deref()
+        .and_then(|active_id| {
+            store.accounts.iter().find(|account| {
+                account.id == active_id && !matches!(&account.auth_data, AuthData::Cookie { .. })
+            })
+        })
+        .cloned();
+
+    active_account.or_else(|| {
+        store
+            .accounts
+            .into_iter()
+            .find(|account| matches!(&account.auth_data, AuthData::Cookie { .. }))
+    })
+}
+
+/// Poll usage while the main window is hidden so tray and floating views stay fresh.
 fn poll_active_account_usage<R: Runtime>(app: AppHandle<R>) {
     std::thread::spawn(move || loop {
-        let account = load_accounts()
-            .ok()
-            .and_then(|store| store.active_account_id)
-            .and_then(|id| get_account(&id).ok().flatten());
+        let main_window_visible = app
+            .get_webview_window("main")
+            .and_then(|window| window.is_visible().ok())
+            .unwrap_or(false);
+        let account = if main_window_visible {
+            None
+        } else {
+            load_accounts().ok().and_then(account_for_usage_poll)
+        };
 
         if let Some(account) = account {
             match tauri::async_runtime::block_on(get_account_usage(&account)) {
@@ -932,6 +955,48 @@ mod tests {
     #[test]
     fn account_ids_are_namespaced_for_tray_events() {
         assert_eq!(account_menu_id("abc-123"), "account:abc-123");
+    }
+
+    #[test]
+    fn usage_poll_prefers_the_active_codex_account() {
+        let cookie = StoredAccount::new_cookie(
+            "Cookie".into(),
+            None,
+            None,
+            None,
+            "session=sample".into(),
+        );
+        let active = StoredAccount::new_api_key("Active".into(), "key-sample".into());
+        let active_id = active.id.clone();
+        let store = AccountsStore {
+            accounts: vec![cookie, active],
+            active_account_id: Some(active_id.clone()),
+            ..AccountsStore::default()
+        };
+
+        let selected = account_for_usage_poll(store).unwrap();
+
+        assert_eq!(selected.id, active_id);
+    }
+
+    #[test]
+    fn usage_poll_falls_back_to_the_first_cookie_account() {
+        let cookie = StoredAccount::new_cookie(
+            "Cookie".into(),
+            None,
+            None,
+            None,
+            "session=sample".into(),
+        );
+        let cookie_id = cookie.id.clone();
+        let store = AccountsStore {
+            accounts: vec![cookie],
+            ..AccountsStore::default()
+        };
+
+        let selected = account_for_usage_poll(store).unwrap();
+
+        assert_eq!(selected.id, cookie_id);
     }
 
     #[test]

@@ -102,9 +102,11 @@ function FloatingUsage() {
     };
   }, [applyUsageUpdates, loadAccounts, loadCachedUsage]);
 
-  const activeAccount = accounts.find((account) => account.is_active);
-  const usage = activeAccount ? usageById[activeAccount.id] : undefined;
-  const isStale = activeAccount ? Boolean(staleById[activeAccount.id]) : false;
+  const displayAccount =
+    accounts.find((account) => account.is_active) ??
+    accounts.find((account) => account.auth_mode === "cookie");
+  const usage = displayAccount ? usageById[displayAccount.id] : undefined;
+  const isStale = displayAccount ? Boolean(staleById[displayAccount.id]) : false;
   const currentWindow = getTauriWindow();
 
   return (
