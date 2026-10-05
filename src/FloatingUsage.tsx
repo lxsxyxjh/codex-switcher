@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AccountInfo, UsageInfo } from "./types";
 import { invokeBackend, isTauriRuntime } from "./lib/platform";
 import { getTauriWindow } from "./lib/tauriWindow";
@@ -13,12 +13,25 @@ import {
 const USAGE_UPDATED_EVENT = "usage-updated";
 const ACCOUNTS_CHANGED_EVENT = "accounts-changed";
 
-function remainingPercent(used: number | null | undefined): string {
+export interface FloatingOptions {
+  floating_usage_enabled: boolean;
+  floating_usage_scale: number;
+  floating_usage_account_id: string | null;
+  floating_usage_show_used: boolean;
+}
+
+function remainingPercent(used: number | null | undefined, showUsed: boolean): string {
   if (used === null || used === undefined || !Number.isFinite(used)) return "--";
-  return `${Math.round(Math.max(0, Math.min(100, 100 - used)))}%`;
+  return `${Math.round(Math.max(0, Math.min(100, showUsed ? used : 100 - used)))}%`;
 }
 
 function FloatingUsage() {
+  const barRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<import("@tauri-apps/api/menu").Menu | null>(null);
+  const [options, setOptions] = useState<FloatingOptions>({ floating_usage_enabled: false, floating_usage_scale: 100, floating_usage_account_id: null, floating_usage_show_used: false });
+  const loadOptions = useCallback(async () => {
+    setOptions(await invokeBackend<FloatingOptions>("get_floating_usage_options"));
+  }, []);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [usageById, setUsageById] = useState<Record<string, UsageInfo>>({});
   const [staleById, setStaleById] = useState<Record<string, boolean>>({});
@@ -58,6 +71,8 @@ function FloatingUsage() {
     syncThemeFromStorage();
     if (!isTauriRuntime()) return;
 
+    let disposed = false;
+    let unlistenSettings: (() => void) | undefined;
     let unlistenUsage: (() => void) | undefined;
     let unlistenAccounts: (() => void) | undefined;
     let unlistenTheme: (() => void) | undefined;
@@ -77,6 +92,7 @@ function FloatingUsage() {
         if (payload === "light" || payload === "dark") applyTheme(payload);
       });
 
+      unlistenSettings = await listen("app-settings-changed", () => { void loadOptions(); void loadCachedUsage(); });
       const currentWindow = getTauriWindow();
       if (currentWindow) {
         unlistenMoved = await currentWindow.onMoved(({ payload }) => {
@@ -90,50 +106,94 @@ function FloatingUsage() {
         });
       }
 
-      await Promise.all([loadAccounts(), loadCachedUsage()]);
+      if (disposed) {
+        unlistenUsage?.(); unlistenAccounts?.(); unlistenTheme?.(); unlistenMoved?.(); unlistenSettings?.();
+        return;
+      }
+      await Promise.all([loadAccounts(), loadCachedUsage(), loadOptions()]);
     })();
 
     return () => {
+      disposed = true;
+      unlistenSettings?.();
+      void menuRef.current?.close();
       if (savePositionTimer !== undefined) window.clearTimeout(savePositionTimer);
       unlistenUsage?.();
       unlistenAccounts?.();
       unlistenTheme?.();
       unlistenMoved?.();
     };
-  }, [applyUsageUpdates, loadAccounts, loadCachedUsage]);
+  }, [applyUsageUpdates, loadAccounts, loadCachedUsage, loadOptions]);
 
   const displayAccount =
+    accounts.find((account) => account.id === options.floating_usage_account_id) ??
     accounts.find((account) => account.is_active) ??
     accounts.find((account) => account.auth_mode === "cookie");
   const usage = displayAccount ? usageById[displayAccount.id] : undefined;
   const isStale = displayAccount ? Boolean(staleById[displayAccount.id]) : false;
   const currentWindow = getTauriWindow();
 
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar || !isTauriRuntime()) return;
+    let lastSize = "";
+    const resize = () => {
+      const { width, height } = bar.getBoundingClientRect();
+      const size = `${Math.ceil(width)}:${Math.ceil(height)}`;
+      if (size === lastSize) return;
+      lastSize = size;
+      void invokeBackend("resize_floating_usage", { width: Math.max(80, Math.ceil(width)), height: Math.max(16, Math.ceil(height)) }).catch(console.error);
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(bar);
+    resize();
+    return () => observer.disconnect();
+  }, []);
+
+  const saveOptions = (values: { scale?: number; accountId?: string; showUsed?: boolean }) => {
+    void invokeBackend<FloatingOptions>("set_floating_usage_options", values).then(setOptions).catch(console.error);
+  };
+  const showContextMenu = async () => {
+    const { Menu } = await import("@tauri-apps/api/menu");
+    await menuRef.current?.close();
+    const menu = await Menu.new({ items: [
+      { text: "打开主界面", action: () => { void invokeBackend("open_main_window"); } },
+      { text: "显示账户", items: [
+        { text: "跟随当前账户", checked: !options.floating_usage_account_id, action: () => saveOptions({ accountId: "" }) },
+        ...accounts.map((account) => ({ text: `${account.name} (${account.auth_mode === "cookie" ? "Cookie" : "Codex 登录"})`, checked: options.floating_usage_account_id === account.id, action: () => saveOptions({ accountId: account.id }) })),
+      ] },
+      { text: "百分比显示", items: [
+        { text: "剩余百分比", checked: !options.floating_usage_show_used, action: () => saveOptions({ showUsed: false }) },
+        { text: "已用百分比", checked: options.floating_usage_show_used, action: () => saveOptions({ showUsed: true }) },
+      ] },
+      { text: "缩放比例", items: [
+        ...[50, 75, 100, 125, 150, 200].map((scale) => ({ text: `${scale}%`, checked: options.floating_usage_scale === scale, action: () => saveOptions({ scale }) })),
+        { text: "自定义…", action: () => {
+          void (async () => {
+            await invokeBackend("open_main_window");
+            const { emit } = await import("@tauri-apps/api/event");
+            await emit("floating-usage-settings-requested");
+          })();
+        } },
+      ] },
+      { text: "关闭悬浮窗", action: () => { void invokeBackend("set_floating_usage_enabled", { enabled: false }); } },
+    ] });
+    menuRef.current = menu;
+    await menu.popup(undefined, currentWindow ?? undefined);
+  };
+  const scale = options.floating_usage_scale / 100;
+  const mode = options.floating_usage_show_used ? "已用" : "剩余";
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-transparent">
-      <div
-        onMouseDown={(event) => {
-          if (event.button === 0) void currentWindow?.startDragging();
-        }}
-        title={isStale ? "额度刷新失败，当前显示上次成功获取的数据" : undefined}
-        className="flex h-11 w-full select-none items-center justify-between gap-2 overflow-hidden rounded-xl border border-gray-200 bg-white px-3 text-xs text-gray-700 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-      >
-        <span className="whitespace-nowrap font-medium tabular-nums">
-          5h <span className="text-gray-900 dark:text-gray-100">{remainingPercent(usage?.primary_used_percent)}</span>
-        </span>
-        <span className="h-4 w-px shrink-0 bg-gray-200 dark:bg-gray-700" />
-        <span className="whitespace-nowrap font-medium tabular-nums">
-          7d <span className="text-gray-900 dark:text-gray-100">{remainingPercent(usage?.secondary_used_percent)}</span>
-        </span>
-        <span className="h-4 w-px shrink-0 bg-gray-200 dark:bg-gray-700" />
-        <span className="flex min-w-0 items-center gap-1 whitespace-nowrap font-medium">
-          {isStale && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />}
-          <span>余额</span>
-          <span className="truncate font-semibold tabular-nums text-gray-900 dark:text-gray-100">
-            {formatCreditsBalance(usage?.credits_balance)}
-          </span>
-        </span>
-      </div>
+    <div ref={barRef}
+      onContextMenu={(event) => { event.preventDefault(); void showContextMenu().catch(console.error); }}
+      onMouseDown={(event) => { if (event.button === 0) void currentWindow?.startDragging().catch(console.error); }}
+      title={`${displayAccount?.name ?? "未添加账户"} · ${mode}百分比${isStale ? " · 刷新失败，保留上次成功数据" : ""} · 右键设置`}
+      className="select-none bg-white/95 text-gray-700 dark:bg-gray-900/95 dark:text-gray-200"
+      style={{ display: "inline-grid", gridTemplateColumns: "repeat(3, max-content)", width: "max-content", gap: 10 * scale, padding: `${8 * scale}px ${10 * scale}px`, fontSize: 12 * scale, lineHeight: 1.5, borderRadius: 10 * scale }}
+    >
+      <span className="whitespace-nowrap tabular-nums">5h {mode} <b>{remainingPercent(usage?.primary_used_percent, options.floating_usage_show_used)}</b></span>
+      <span className="whitespace-nowrap tabular-nums">7d {mode} <b>{remainingPercent(usage?.secondary_used_percent, options.floating_usage_show_used)}</b></span>
+      <span className="whitespace-nowrap tabular-nums">{isStale && <span className="text-amber-500">• </span>}余额 <b>{formatCreditsBalance(usage?.credits_balance)}</b></span>
     </div>
   );
 }

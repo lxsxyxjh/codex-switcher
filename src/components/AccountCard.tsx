@@ -305,7 +305,8 @@ export function AccountCard({
               </h3>
             )}
           </div>
-          {account.email && (
+          <p className="text-xs text-gray-400 dark:text-gray-500">{account.auth_mode === "cookie" ? "Cookie · 额度查看" : account.auth_mode === "chat_g_p_t" ? "Codex 登录" : "API Key"}</p>
+          {account.email && account.email !== account.name && (
             <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
               <BlurredText blur={masked}>{account.email}</BlurredText>
             </p>

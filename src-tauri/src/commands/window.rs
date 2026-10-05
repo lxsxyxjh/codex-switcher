@@ -5,11 +5,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::{
-    auth::{load_app_settings, save_app_settings},
-    types::{DockDisplayMode, FloatingUsagePosition, TrayDisplayMode, UsageInfo},
+    auth::{load_accounts, load_app_settings, save_app_settings},
+    types::{AppSettings, DockDisplayMode, FloatingUsagePosition, TrayDisplayMode, UsageInfo},
 };
 
 /// Label of the borderless tray popup window.
@@ -103,8 +103,61 @@ pub async fn set_floating_usage_enabled(app: AppHandle, enabled: bool) -> Result
             return Err(error.to_string());
         }
 
+        let _ = app.emit("app-settings-changed", ());
+        #[cfg(desktop)]
+        crate::tray::refresh(&app);
         Ok(enabled)
     }
+}
+
+#[tauri::command]
+pub fn get_floating_usage_options() -> Result<AppSettings, String> {
+    let mut settings = load_app_settings().map_err(|error| error.to_string())?;
+    settings.floating_usage_scale = settings.floating_usage_scale.clamp(50, 200);
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn set_floating_usage_options(
+    app: AppHandle,
+    scale: Option<u16>,
+    account_id: Option<String>,
+    show_used: Option<bool>,
+) -> Result<AppSettings, String> {
+    let mut settings = load_app_settings().map_err(|error| error.to_string())?;
+    if let Some(scale) = scale {
+        if !(50..=200).contains(&scale) {
+            return Err("缩放比例应在 50% 到 200% 之间".into());
+        }
+        settings.floating_usage_scale = scale;
+    }
+    if let Some(account_id) = account_id {
+        if !account_id.is_empty()
+            && !load_accounts().map_err(|error| error.to_string())?.accounts.iter().any(|account| account.id == account_id)
+        {
+            return Err("所选账户已不存在".into());
+        }
+        settings.floating_usage_account_id = if account_id.is_empty() { None } else { Some(account_id) };
+    }
+    if let Some(show_used) = show_used {
+        settings.floating_usage_show_used = show_used;
+    }
+    save_app_settings(&settings).map_err(|error| error.to_string())?;
+    let _ = app.emit("app-settings-changed", ());
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn resize_floating_usage(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
+    if !width.is_finite() || !height.is_finite() || !(80.0..=1200.0).contains(&width) || !(16.0..=160.0).contains(&height) {
+        return Err("悬浮窗尺寸无效".into());
+    }
+    if let Some(window) = app.get_webview_window(FLOATING_USAGE_WINDOW) {
+        window.set_size(tauri::LogicalSize::new(width.ceil(), height.ceil())).map_err(|error| error.to_string())?;
+        #[cfg(target_os = "windows")]
+        crate::tray::keep_floating_usage_visible(&app).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

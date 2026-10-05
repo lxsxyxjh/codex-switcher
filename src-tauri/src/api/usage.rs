@@ -322,6 +322,15 @@ pub fn clear_chatgpt_cookie_session(account_id: &str) {
     }
 }
 
+pub fn move_cookie_session_cache(previous_id: &str, stored_id: &str) {
+    if previous_id == stored_id { return; }
+    if let Ok(mut cache) = COOKIE_SESSION_CACHE.lock() {
+        if let Some(session) = cache.remove(previous_id) {
+            cache.insert(stored_id.to_string(), session);
+        }
+    }
+}
+
 async fn get_usage_with_cookie_auth(account: &StoredAccount) -> Result<UsageInfo> {
     let session = get_cookie_session(account).await?;
     let mut response = send_chatgpt_usage_request(

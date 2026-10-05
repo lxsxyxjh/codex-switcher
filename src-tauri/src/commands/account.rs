@@ -54,6 +54,11 @@ const MAX_IMPORT_JSON_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_IMPORT_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const SLIM_IMPORT_CONCURRENCY: usize = 6;
 
+#[tauri::command]
+pub fn get_codex_auth_path() -> Result<String, String> {
+    crate::auth::get_codex_auth_file().map(|path| path.to_string_lossy().into_owned()).map_err(|error| error.to_string())
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct SlimPayload {
     #[serde(rename = "v")]
@@ -175,7 +180,7 @@ pub async fn add_account_from_cookie(
         );
         cache_chatgpt_cookie_session(&account.id, session);
 
-        let usage = match get_account_usage(&account).await {
+        let mut usage = match get_account_usage(&account).await {
             Ok(usage) => usage,
             Err(error) => {
                 clear_chatgpt_cookie_session(&account.id);
@@ -195,6 +200,8 @@ pub async fn add_account_from_cookie(
                 return Err(error.to_string());
             }
         };
+        crate::api::usage::move_cookie_session_cache(&usage.account_id, &stored.id);
+        usage.account_id = stored.id.clone();
         let store = load_accounts().map_err(|error| error.to_string())?;
         let active_id = store.active_account_id.as_deref();
         #[cfg(desktop)]
@@ -850,7 +857,6 @@ fn validate_imported_store(store: &AccountsStore) -> anyhow::Result<()> {
     }
 
     let mut ids = HashSet::new();
-    let mut names = HashSet::new();
 
     for account in &store.accounts {
         if account.id.trim().is_empty() {
@@ -861,9 +867,6 @@ fn validate_imported_store(store: &AccountsStore) -> anyhow::Result<()> {
         }
         if !ids.insert(account.id.clone()) {
             anyhow::bail!("Import contains duplicate account id: {}", account.id);
-        }
-        if !names.insert(account.name.clone()) {
-            anyhow::bail!("Import contains duplicate account name: {}", account.name);
         }
     }
 
@@ -885,15 +888,11 @@ fn merge_accounts_store(
     let total_in_payload = imported.accounts.len();
     let mut imported_count = 0usize;
     let mut existing_ids: HashSet<String> = current.accounts.iter().map(|a| a.id.clone()).collect();
-    let mut existing_names: HashSet<String> =
-        current.accounts.iter().map(|a| a.name.clone()).collect();
-
     for account in imported.accounts {
-        if existing_ids.contains(&account.id) || existing_names.contains(&account.name) {
+        if existing_ids.contains(&account.id) || current.accounts.iter().any(|existing| crate::auth::same_account_credentials(existing, &account)) {
             continue;
         }
         existing_ids.insert(account.id.clone());
-        existing_names.insert(account.name.clone());
         current.accounts.push(account);
         imported_count += 1;
     }
@@ -968,6 +967,15 @@ mod account_merge_tests {
             active_account_id,
             ..AccountsStore::default()
         }
+    }
+
+    #[test]
+    fn same_name_different_login_sources_import_together() {
+        let imported = store(vec![cookie_account("same@example.com"), codex_account("same@example.com")], None);
+        super::validate_imported_store(&imported).unwrap();
+        let (merged, summary) = merge_accounts_store(AccountsStore::default(), imported);
+        assert_eq!(merged.accounts.len(), 2);
+        assert_eq!(summary.imported_count, 2);
     }
 
     #[test]

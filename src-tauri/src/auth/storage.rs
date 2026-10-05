@@ -164,24 +164,58 @@ pub fn save_accounts(store: &AccountsStore) -> Result<()> {
 /// Add a new account to the store
 pub fn add_account(account: StoredAccount) -> Result<StoredAccount> {
     let mut store = load_accounts()?;
-
-    // Check for duplicate names
-    if store.accounts.iter().any(|a| a.name == account.name) {
-        anyhow::bail!("An account with name '{}' already exists", account.name);
-    }
-
-    let account_clone = account.clone();
-    store.accounts.push(account);
-
-    // If this is the first account, make it active
-    if store.active_account_id.is_none()
-        && !matches!(&account_clone.auth_data, AuthData::Cookie { .. })
-    {
-        store.active_account_id = Some(account_clone.id.clone());
-    }
-
+    let stored = store_account(&mut store, account);
     save_accounts(&store)?;
-    Ok(account_clone)
+    Ok(stored)
+}
+
+fn account_identity(account: &StoredAccount) -> Option<String> {
+    match &account.auth_data {
+        AuthData::ChatGPT { id_token, account_id, .. } => parse_chatgpt_id_token_claims(id_token).account_id.or_else(|| account_id.clone()),
+        AuthData::Cookie { account_id, .. } => account_id.clone(),
+        AuthData::ApiKey { .. } => None,
+    }
+}
+
+pub(crate) fn same_account_credentials(first: &StoredAccount, second: &StoredAccount) -> bool {
+    match (&first.auth_data, &second.auth_data) {
+        (AuthData::ApiKey { key: first }, AuthData::ApiKey { key: second }) => return first == second,
+        (AuthData::ChatGPT { .. }, AuthData::ChatGPT { .. }) | (AuthData::Cookie { .. }, AuthData::Cookie { .. }) => {},
+        _ => return false,
+    }
+    // Workspace IDs take priority: one email can belong to multiple workspaces.
+    if let (Some(first_id), Some(second_id)) = (account_identity(first), account_identity(second)) {
+        if first_id != second_id {
+            return false;
+        }
+        return match (&first.email, &second.email) {
+            (Some(first_email), Some(second_email)) if !first_email.is_empty() && !second_email.is_empty() => first_email.eq_ignore_ascii_case(second_email),
+            _ => true,
+        };
+    }
+    if let (Some(first_email), Some(second_email)) = (&first.email, &second.email) {
+        return !first_email.is_empty() && first_email.eq_ignore_ascii_case(second_email);
+    }
+    match (&first.auth_data, &second.auth_data) {
+        (AuthData::ChatGPT { refresh_token: first, .. }, AuthData::ChatGPT { refresh_token: second, .. }) => first == second,
+        (AuthData::Cookie { session_cookie: first, .. }, AuthData::Cookie { session_cookie: second, .. }) => first == second,
+        _ => false,
+    }
+}
+
+fn store_account(store: &mut AccountsStore, mut account: StoredAccount) -> StoredAccount {
+    if let Some(existing) = store.accounts.iter_mut().find(|existing| same_account_credentials(existing, &account)) {
+        account.id = existing.id.clone();
+        account.created_at = existing.created_at;
+        account.last_used_at = existing.last_used_at;
+        *existing = account.clone();
+    } else {
+        store.accounts.push(account.clone());
+    }
+    if store.active_account_id.is_none() && !matches!(&account.auth_data, AuthData::Cookie { .. }) {
+        store.active_account_id = Some(account.id.clone());
+    }
+    account
 }
 
 /// Remove an account by ID
@@ -395,7 +429,7 @@ pub fn set_masked_account_ids(ids: Vec<String>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::sync_active_account_tokens;
+    use super::{store_account, sync_active_account_tokens};
     use crate::types::{AccountsStore, AuthData, AuthDotJson, StoredAccount, TokenData};
     use base64::Engine;
 
@@ -410,6 +444,54 @@ mod tests {
             format!("refresh-{suffix}"),
             Some(account_id.into()),
         )
+    }
+
+    #[test]
+    fn reimport_updates_credentials_without_changing_active_id() {
+        let mut store = AccountsStore::default();
+        let first = store_account(&mut store, account("mail", "workspace-a", "old"));
+        let second = store_account(&mut store, account("mail", "workspace-a", "new"));
+        assert_eq!(first.id, second.id);
+        assert_eq!(store.accounts.len(), 1);
+        assert_eq!(store.active_account_id.as_deref(), Some(first.id.as_str()));
+        assert_eq!(refresh_token(&store.accounts[0]), "refresh-new");
+    }
+
+    #[test]
+    fn cookie_and_oauth_credentials_coexist_with_same_name() {
+        let mut store = AccountsStore::default();
+        let oauth = store_account(&mut store, account("mail", "workspace-a", "oauth"));
+        let cookie = store_account(&mut store, StoredAccount::new_cookie("mail".into(), None, None, Some("workspace-a".into()), "session=old".into()));
+        let renewed = store_account(&mut store, StoredAccount::new_cookie("mail".into(), None, None, Some("workspace-a".into()), "session=new".into()));
+        assert_eq!(store.accounts.len(), 2);
+        assert_eq!(cookie.id, renewed.id);
+        assert_ne!(oauth.id, cookie.id);
+        assert_eq!(store.active_account_id.as_deref(), Some(oauth.id.as_str()));
+        assert_eq!(refresh_token(&store.accounts[0]), "refresh-oauth");
+    }
+
+    #[test]
+    fn shared_email_does_not_merge_different_workspaces() {
+        let mut store = AccountsStore::default();
+        let mut first = account("mail", "workspace-a", "a");
+        first.email = Some("mail@example.com".into());
+        let mut second = account("mail", "workspace-b", "b");
+        second.email = first.email.clone();
+        store_account(&mut store, first);
+        store_account(&mut store, second);
+        assert_eq!(store.accounts.len(), 2);
+    }
+
+    #[test]
+    fn shared_workspace_does_not_merge_different_users() {
+        let mut store = AccountsStore::default();
+        let mut first = account("first", "workspace-a", "a");
+        first.email = Some("first@example.com".into());
+        let mut second = account("second", "workspace-a", "b");
+        second.email = Some("second@example.com".into());
+        store_account(&mut store, first);
+        store_account(&mut store, second);
+        assert_eq!(store.accounts.len(), 2);
     }
 
     fn auth(account_id: &str, suffix: &str) -> AuthDotJson {

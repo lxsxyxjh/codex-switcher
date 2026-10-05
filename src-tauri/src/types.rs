@@ -40,6 +40,10 @@ fn default_close_behavior_prompt_enabled() -> bool {
     true
 }
 
+fn default_floating_usage_scale() -> u16 {
+    100
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
@@ -51,6 +55,12 @@ pub struct AppSettings {
     pub floating_usage_enabled: bool,
     #[serde(default)]
     pub floating_usage_position: Option<FloatingUsagePosition>,
+    #[serde(default = "default_floating_usage_scale")]
+    pub floating_usage_scale: u16,
+    #[serde(default)]
+    pub floating_usage_account_id: Option<String>,
+    #[serde(default)]
+    pub floating_usage_show_used: bool,
 }
 
 impl Default for AppSettings {
@@ -61,6 +71,9 @@ impl Default for AppSettings {
             close_behavior_prompt_enabled: true,
             floating_usage_enabled: false,
             floating_usage_position: None,
+            floating_usage_scale: 100,
+            floating_usage_account_id: None,
+            floating_usage_show_used: false,
         }
     }
 }

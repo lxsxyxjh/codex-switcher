@@ -38,9 +38,11 @@ const SWITCH_ACCOUNT_BLOCKED_EVENT: &str = "switch-account-blocked";
 const ACCOUNT_ITEM_PREFIX: &str = "account:";
 const OPEN_ITEM_ID: &str = "open";
 const QUIT_ITEM_ID: &str = "quit";
+#[cfg(target_os = "windows")]
+const FLOATING_ITEM_ID: &str = "floating";
 const TRAY_WIDTH: f64 = 300.0;
 const TRAY_HEIGHT: f64 = 420.0;
-const FLOATING_USAGE_WIDTH: f64 = 360.0;
+const FLOATING_USAGE_WIDTH: f64 = 260.0;
 const FLOATING_USAGE_HEIGHT: f64 = 48.0;
 const ACCOUNT_METADATA_REFRESH_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
@@ -52,7 +54,7 @@ struct SwitchAccountBlockedPayload {
 }
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     create_tray_window(app)?;
 
     #[cfg(target_os = "windows")]
@@ -259,6 +261,7 @@ pub fn show_floating_usage_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Resu
     if let Some(window) = app.get_webview_window(FLOATING_USAGE_WINDOW) {
         window.show()?;
         window.set_always_on_top(true)?;
+        keep_floating_usage_visible(app)?;
         return Ok(());
     }
 
@@ -288,7 +291,9 @@ fn create_floating_usage_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result
     .inner_size(FLOATING_USAGE_WIDTH, FLOATING_USAGE_HEIGHT)
     .resizable(false)
     .decorations(false)
+    .shadow(false)
     .transparent(true)
+    .background_color(tauri::utils::config::Color(0, 0, 0, 0))
     .always_on_top(true)
     .focusable(false)
     .skip_taskbar(true)
@@ -333,8 +338,9 @@ fn floating_position_is_visible<R: Runtime>(
         let monitor_position = monitor.position();
         let monitor_size = monitor.size();
         let scale = monitor.scale_factor();
-        let width = (FLOATING_USAGE_WIDTH * scale).ceil() as i32;
-        let height = (FLOATING_USAGE_HEIGHT * scale).ceil() as i32;
+        let size = app.get_webview_window(FLOATING_USAGE_WINDOW).and_then(|window| window.outer_size().ok());
+        let width = size.map(|size| size.width as i32).unwrap_or((FLOATING_USAGE_WIDTH * scale).ceil() as i32);
+        let height = size.map(|size| size.height as i32).unwrap_or((FLOATING_USAGE_HEIGHT * scale).ceil() as i32);
         position.x >= monitor_position.x
             && position.y >= monitor_position.y
             && position.x.saturating_add(width) <= monitor_position.x + monitor_size.width as i32
@@ -356,19 +362,32 @@ fn default_floating_usage_position<R: Runtime>(app: &AppHandle<R>) -> PhysicalPo
     let position = monitor.position();
     let size = monitor.size();
     let scale = monitor.scale_factor();
-    let width = ((FLOATING_USAGE_WIDTH + 16.0) * scale).ceil() as i32;
+    let width = app.get_webview_window(FLOATING_USAGE_WINDOW)
+        .and_then(|window| window.outer_size().ok())
+        .map(|size| size.width as i32)
+        .unwrap_or((FLOATING_USAGE_WIDTH * scale).ceil() as i32);
     let margin = (16.0 * scale).ceil() as i32;
     PhysicalPosition::new(
-        position.x + size.width as i32 - width,
+        (position.x + size.width as i32 - width - margin).max(position.x),
         position.y + margin,
     )
+}
+
+#[cfg(target_os = "windows")]
+pub fn keep_floating_usage_visible<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(FLOATING_USAGE_WINDOW) {
+        if !floating_position_is_visible(app, window.outer_position()?) {
+            window.set_position(default_floating_usage_position(app))?;
+        }
+    }
+    Ok(())
 }
 
 // ============================================================================
 // React popup window (used on macOS/Windows via tray click events)
 // ============================================================================
 
-#[cfg_attr(target_os = "linux", allow(dead_code))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn create_tray_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     if app.get_webview_window(TRAY_WINDOW).is_some() {
         return Ok(());
@@ -403,15 +422,20 @@ fn handle_tray_icon_event<R: Runtime>(tray: &tauri::tray::TrayIcon<R>, event: Tr
     if let TrayIconEvent::Click {
         button: MouseButton::Left,
         button_state: MouseButtonState::Up,
-        position,
+        position: _,
         ..
     } = event
     {
-        toggle_tray_window(tray.app_handle(), position);
+        #[cfg(target_os = "windows")]
+        show_main_window(tray.app_handle());
+        #[cfg(not(target_os = "windows"))]
+        if let TrayIconEvent::Click { position, .. } = event {
+            toggle_tray_window(tray.app_handle(), position);
+        }
     }
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn toggle_tray_window<R: Runtime>(app: &AppHandle<R>, cursor: PhysicalPosition<f64>) {
     let Some(window) = app.get_webview_window(TRAY_WINDOW) else {
         return;
@@ -428,7 +452,7 @@ fn toggle_tray_window<R: Runtime>(app: &AppHandle<R>, cursor: PhysicalPosition<f
     let _ = app.emit_to(TRAY_WINDOW, TRAY_REFRESH_EVENT, ());
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn position_near_cursor<R: Runtime>(
     window: &tauri::WebviewWindow<R>,
     cursor: PhysicalPosition<f64>,
@@ -458,7 +482,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, store: &AccountsStore) -> tauri::R
 
     if store.accounts.is_empty() {
         menu.append(
-            &MenuItemBuilder::with_id("empty", "No accounts configured")
+            &MenuItemBuilder::with_id("empty", "尚未添加账户")
                 .enabled(false)
                 .build(app)?,
         )?;
@@ -481,12 +505,16 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, store: &AccountsStore) -> tauri::R
     }
 
     menu.append(&PredefinedMenuItem::separator(app)?)?;
+    #[cfg(target_os = "windows")]
+    menu.append(&CheckMenuItemBuilder::with_id(FLOATING_ITEM_ID, "悬浮额度窗")
+        .checked(load_app_settings().map(|settings| settings.floating_usage_enabled).unwrap_or(false))
+        .build(app)?)?;
     #[cfg(target_os = "macos")]
     append_dock_settings_menu(app, &menu)?;
     #[cfg(target_os = "macos")]
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItemBuilder::with_id(OPEN_ITEM_ID, "Open Codex Switcher").build(app)?)?;
-    menu.append(&MenuItemBuilder::with_id(QUIT_ITEM_ID, "Quit").build(app)?)?;
+    menu.append(&MenuItemBuilder::with_id(OPEN_ITEM_ID, "打开主界面").build(app)?)?;
+    menu.append(&MenuItemBuilder::with_id(QUIT_ITEM_ID, "退出程序").build(app)?)?;
     Ok(menu)
 }
 
@@ -522,6 +550,17 @@ fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
     }
 
     match item_id {
+        #[cfg(target_os = "windows")]
+        FLOATING_ITEM_ID => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let enabled = load_app_settings().map(|settings| settings.floating_usage_enabled).unwrap_or(false);
+                if let Err(error) = crate::commands::set_floating_usage_enabled(app.clone(), !enabled).await {
+                    show_main_window(&app);
+                    let _ = app.emit("floating-usage-error", error);
+                }
+            });
+        }
         OPEN_ITEM_ID => show_main_window(app),
         QUIT_ITEM_ID => app.exit(0),
         _ => {
@@ -854,7 +893,11 @@ fn poll_active_account_usage<R: Runtime>(app: AppHandle<R>) {
         if main_window_visible {
             let usages = tauri::async_runtime::block_on(refresh_all_usage(&store.accounts));
             ingest_usage(&app, usages);
-        } else if let Some(account) = account_for_usage_poll(store) {
+        } else if let Some(account) = load_app_settings().ok()
+            .and_then(|settings| settings.floating_usage_account_id)
+            .and_then(|id| store.accounts.iter().find(|account| account.id == id).cloned())
+            .or_else(|| account_for_usage_poll(store))
+        {
             match tauri::async_runtime::block_on(get_account_usage(&account)) {
                 // Keep the last known title on transient fetch errors.
                 Ok(usage) => ingest_usage(&app, vec![usage]),

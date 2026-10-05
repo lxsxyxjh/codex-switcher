@@ -29,8 +29,7 @@ export function AddAccountModal({
   onCompleteOAuth,
   onCancelOAuth,
 }: AddAccountModalProps) {
-  const [activeTab, setActiveTab] = useState<Tab>("oauth");
-  const [name, setName] = useState("");
+  const [activeTab, setActiveTab] = useState<Tab>("import");
   const [fileSource, setFileSource] = useState<FileSource | null>(null);
   const [cookie, setCookie] = useState("");
   const [loading, setLoading] = useState(false);
@@ -41,10 +40,9 @@ export function AddAccountModal({
   const isPrimaryDisabled = loading || (activeTab === "oauth" && oauthPending);
   const tauriRuntime = isTauriRuntime();
   const windowsPlatform = tauriRuntime && isWindowsPlatform();
-  const tabs: Tab[] = windowsPlatform ? ["oauth", "import", "cookie"] : ["oauth", "import"];
+  const tabs: Tab[] = windowsPlatform ? ["import", "oauth", "cookie"] : ["import", "oauth"];
 
   const resetForm = () => {
-    setName("");
     setFileSource(null);
     setCookie("");
     setError(null);
@@ -65,7 +63,7 @@ export function AddAccountModal({
     try {
       setLoading(true);
       setError(null);
-      const info = await onStartOAuth(name.trim());
+      const info = await onStartOAuth("");
       setAuthUrl(info.auth_url);
       setOauthPending(true);
       setLoading(false);
@@ -91,14 +89,14 @@ export function AddAccountModal({
 
   const handleImportFile = async () => {
     if (!fileSource) {
-      setError("Please select an auth.json file");
+      setError("请选择 auth.json 文件");
       return;
     }
 
     try {
       setLoading(true);
       setError(null);
-      await onImportFile(fileSource, name.trim());
+      await onImportFile(fileSource, "");
       handleClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -115,7 +113,7 @@ export function AddAccountModal({
     try {
       setLoading(true);
       setError(null);
-      await onImportCookie(cookie, name.trim());
+      await onImportCookie(cookie, "");
       handleClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -167,20 +165,6 @@ export function AddAccountModal({
 
         {/* Content */}
         <div className="p-5 space-y-4">
-          {/* Account name is optional; the backend derives one when blank. */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              账户名称（选填）
-            </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="留空则使用邮箱作为名称"
-              className="w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-gray-400 dark:focus:border-gray-500 focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500 transition-colors"
-            />
-          </div>
-
           {/* Tab-specific content */}
           {activeTab === "oauth" && (
             <div className="text-sm text-gray-500 dark:text-gray-400">
@@ -278,7 +262,7 @@ export function AddAccountModal({
                 className="w-full px-3 py-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-gray-400 dark:focus:border-gray-500 focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500"
               />
               <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
-                Cookie 会为当前 Windows 用户加密保存。此类账户仅查询额度，不能切换 Codex 登录或发送预热请求。
+                使用浏览器会话查看额度，添加后自动识别邮箱。Codex 登录切换和预热请使用文件或 ChatGPT 登录账户。
               </p>
             </div>
           )}

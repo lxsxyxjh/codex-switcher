@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DesktopReopenPreference } from "../lib/desktopReopen";
 import type { CodexClosePreference } from "../lib/codexClosePreference";
-import { invokeBackend, isTauriRuntime } from "../lib/platform";
+import { invokeBackend, isTauriRuntime, isWindowsPlatform } from "../lib/platform";
+import type { FloatingOptions } from "../FloatingUsage";
 import type { DockDisplayMode } from "../types";
 
 type TrayDisplayMode = "icon_and_session" | "active_usage_text" | "hidden";
@@ -26,6 +27,8 @@ export function SettingsModal({
   onClose,
 }: SettingsModalProps) {
   const [displaySettings, setDisplaySettings] = useState<DisplaySettings | null>(null);
+  const [floating, setFloating] = useState<FloatingOptions | null>(null);
+  const [scaleDraft, setScaleDraft] = useState("100");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestId = useRef(0);
@@ -33,9 +36,14 @@ export function SettingsModal({
   const loadDisplaySettings = useCallback(async () => {
     const currentRequest = ++requestId.current;
     try {
-      const settings = await invokeBackend<DisplaySettings>("get_display_settings");
+      const [settings, floatingSettings] = await Promise.all([
+        invokeBackend<DisplaySettings>("get_display_settings"),
+        isWindowsPlatform() ? invokeBackend<FloatingOptions>("get_floating_usage_options") : Promise.resolve(null),
+      ]);
       if (currentRequest === requestId.current) {
         setDisplaySettings(settings);
+        setFloating(floatingSettings);
+        if (floatingSettings) setScaleDraft(String(floatingSettings.floating_usage_scale));
         setError(null);
       }
     } catch (err) {
@@ -79,6 +87,20 @@ export function SettingsModal({
     } finally {
       setSaving(false);
     }
+  };
+
+  const changeFloating = async (values: { scale?: number; showUsed?: boolean; enabled?: boolean }) => {
+    setSaving(true);
+    setError(null);
+    try {
+      if (values.enabled !== undefined) await invokeBackend("set_floating_usage_enabled", { enabled: values.enabled });
+      else {
+        if (values.scale !== undefined && (!Number.isInteger(values.scale) || values.scale < 50 || values.scale > 200)) throw new Error("缩放比例应为 50 到 200 的整数");
+        await invokeBackend("set_floating_usage_options", values);
+      }
+      await loadDisplaySettings();
+    } catch (err) { setError(String(err)); }
+    finally { setSaving(false); }
   };
 
   const selectClassName = "w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 disabled:opacity-50";
@@ -128,6 +150,19 @@ export function SettingsModal({
               <div className="border-t border-gray-100 dark:border-gray-800" />
             </>
           )}
+          {floating && <section className="grid gap-3">
+            <label className="text-sm font-medium"><input type="checkbox" checked={floating.floating_usage_enabled} disabled={saving} onChange={(event) => void changeFloating({ enabled: event.target.checked })} /> 桌面悬浮额度窗</label>
+            <label htmlFor="floating-percent-mode" className="text-sm">百分比显示</label>
+            <select id="floating-percent-mode" className={selectClassName} disabled={saving} value={String(floating.floating_usage_show_used)} onChange={(event) => void changeFloating({ showUsed: event.target.value === "true" })}>
+              <option value="false">剩余百分比</option><option value="true">已用百分比</option>
+            </select>
+            <label htmlFor="floating-scale" className="text-sm">悬浮窗缩放比例（50%–200%）</label>
+            <div className="grid grid-cols-[1fr_auto] gap-2">
+              <input id="floating-scale" type="number" min={50} max={200} step={1} value={scaleDraft} disabled={saving} onChange={(event) => setScaleDraft(event.target.value)} className={selectClassName} />
+              <button disabled={saving} onClick={() => void changeFloating({ scale: Number(scaleDraft) })} className="h-[34px] rounded-lg bg-blue-50 px-3 text-sm text-blue-600 hover:bg-blue-100 disabled:opacity-50">保存</button>
+            </div>
+            <p className="text-xs text-gray-500">右键悬浮窗可以选择显示账户、打开主界面或关闭悬浮窗。</p>
+          </section>}
           <label htmlFor="codex-close-preference" className="block text-sm font-medium text-gray-900 dark:text-gray-100">
             Codex 关闭方式
           </label>

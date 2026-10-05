@@ -180,8 +180,6 @@ function App() {
     renameAccount,
     importFromFile,
     importFromCookie,
-    exportAccountsSlimText,
-    importAccountsSlimText,
     startOAuthLogin,
     completeOAuthLogin,
     cancelOAuthLogin,
@@ -190,13 +188,6 @@ function App() {
   } = useAccounts();
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
-  const [configModalMode, setConfigModalMode] = useState<"slim_export" | "slim_import">(
-    "slim_export"
-  );
-  const [configPayload, setConfigPayload] = useState("");
-  const [configModalError, setConfigModalError] = useState<string | null>(null);
-  const [configCopied, setConfigCopied] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
@@ -204,8 +195,6 @@ function App() {
   const [pendingSwitchAccountId, setPendingSwitchAccountId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isOpeningCodex, setIsOpeningCodex] = useState(false);
-  const [isExportingSlim, setIsExportingSlim] = useState(false);
-  const [isImportingSlim, setIsImportingSlim] = useState(false);
   const [isExportingFull, setIsExportingFull] = useState(false);
   const [isImportingFull, setIsImportingFull] = useState(false);
   const [isWarmingAll, setIsWarmingAll] = useState(false);
@@ -631,6 +620,22 @@ function App() {
       return "Unknown error";
     }
   }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let disposed = false;
+    const stops: (() => void)[] = [];
+    void import("@tauri-apps/api/event").then(async ({ listen }) => {
+      for (const [event, callback] of [
+        ["floating-usage-settings-requested", () => setIsSettingsOpen(true)],
+        ["floating-usage-error", ({ payload }: { payload: string }) => showWarmupToast(payload, true)],
+      ] as const) {
+        const stop = await listen<string>(event, callback);
+        if (disposed) stop(); else stops.push(stop);
+      }
+    });
+    return () => { disposed = true; stops.forEach((stop) => stop()); };
+  }, [showWarmupToast]);
 
   const runWindowAction = useCallback(
     (action: "minimize" | "toggleMaximize" | "close") => {
@@ -1150,61 +1155,6 @@ function App() {
     return `定时：${upcoming ?? timedWarmupTimes[0]}`;
   }, [timedWarmupEnabled, timedWarmupRunning, timedWarmupTimes]);
 
-  const handleExportSlimText = async () => {
-    setConfigModalMode("slim_export");
-    setConfigModalError(null);
-    setConfigPayload("");
-    setConfigCopied(false);
-    setIsConfigModalOpen(true);
-
-    try {
-      setIsExportingSlim(true);
-      const payload = await exportAccountsSlimText();
-      setConfigPayload(payload);
-      showWarmupToast(`Slim text exported (${accounts.length} accounts).`);
-    } catch (err) {
-      console.error("Failed to export slim text:", err);
-      const message = err instanceof Error ? err.message : String(err);
-      setConfigModalError(message);
-      showWarmupToast("精简配置导出失败。", true);
-    } finally {
-      setIsExportingSlim(false);
-    }
-  };
-
-  const openImportSlimTextModal = () => {
-    setConfigModalMode("slim_import");
-    setConfigModalError(null);
-    setConfigPayload("");
-    setConfigCopied(false);
-    setIsConfigModalOpen(true);
-  };
-
-  const handleImportSlimText = async () => {
-    if (!configPayload.trim()) {
-      setConfigModalError("请先粘贴精简配置文本。");
-      return;
-    }
-
-    try {
-      setIsImportingSlim(true);
-      setConfigModalError(null);
-      const summary = await importAccountsSlimText(configPayload);
-      setMaskedAccounts(new Set());
-      setIsConfigModalOpen(false);
-      showWarmupToast(
-        `Imported ${summary.imported_count}, skipped ${summary.skipped_count} (total ${summary.total_in_payload})`
-      );
-    } catch (err) {
-      console.error("Failed to import slim text:", err);
-      const message = err instanceof Error ? err.message : String(err);
-      setConfigModalError(message);
-      showWarmupToast("精简配置导入失败。", true);
-    } finally {
-      setIsImportingSlim(false);
-    }
-  };
-
   const handleExportFullFile = async () => {
     try {
       setIsExportingFull(true);
@@ -1697,32 +1647,12 @@ function App() {
                     <button
                       onClick={() => {
                         setIsActionsMenuOpen(false);
-                        void handleExportSlimText();
-                      }}
-                      disabled={isExportingSlim}
-                      className="w-full rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-gray-100 disabled:opacity-50 dark:text-white dark:hover:bg-neutral-900"
-                    >
-                      {isExportingSlim ? "正在导出…" : "导出精简配置"}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setIsActionsMenuOpen(false);
-                        openImportSlimTextModal();
-                      }}
-                      disabled={isImportingSlim}
-                      className="w-full rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-gray-100 disabled:opacity-50 dark:text-white dark:hover:bg-neutral-900"
-                    >
-                      {isImportingSlim ? "正在导入…" : "导入精简配置"}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setIsActionsMenuOpen(false);
                         void handleExportFullFile();
                       }}
                       disabled={isExportingFull}
                       className="w-full rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-gray-100 disabled:opacity-50 dark:text-white dark:hover:bg-neutral-900"
                     >
-                      {isExportingFull ? "正在导出…" : "导出加密备份文件"}
+                      {isExportingFull ? "正在导出…" : "导出"}
                     </button>
                     <button
                       onClick={() => {
@@ -1732,7 +1662,7 @@ function App() {
                       disabled={isImportingFull}
                       className="w-full rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-gray-100 disabled:opacity-50 dark:text-white dark:hover:bg-neutral-900"
                     >
-                      {isImportingFull ? "正在导入…" : "导入加密备份文件"}
+                      {isImportingFull ? "正在导入…" : "导入"}
                     </button>
                   </div>
                 )}
@@ -2198,87 +2128,6 @@ function App() {
         onCancelOAuth={cancelOAuthLogin}
       />
 
-      {/* Import/Export Config Modal */}
-      {isConfigModalOpen && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl w-full max-w-2xl mx-4 shadow-xl">
-            <div className="flex items-center justify-between p-5 border-b border-gray-100 dark:border-gray-800">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                {configModalMode === "slim_export" ? "导出精简配置" : "导入精简配置"}
-              </h2>
-              <button
-                onClick={() => setIsConfigModalOpen(false)}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="p-5 space-y-4">
-              {configModalMode === "slim_import" ? (
-                <p className="text-sm text-amber-700 dark:text-amber-200 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded-lg px-3 py-2">
-                  已有账户会保留，只导入尚未添加的账户。
-                </p>
-              ) : (
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  此精简配置包含账户凭证，请妥善保管。
-                </p>
-              )}
-              <textarea
-                value={configPayload}
-                onChange={(e) => setConfigPayload(e.target.value)}
-                readOnly={configModalMode === "slim_export"}
-                placeholder={
-                  configModalMode === "slim_export"
-                    ? isExportingSlim
-                      ? "正在生成…"
-                      : "导出的配置文本将显示在此处"
-                    : "请粘贴配置文本"
-                }
-                className="w-full h-48 px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-gray-400 dark:focus:border-gray-500 focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500 font-mono"
-              />
-              {configModalError && (
-                <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg text-red-600 dark:text-red-300 text-sm">
-                  {configModalError}
-                </div>
-              )}
-            </div>
-            <div className="flex gap-3 p-5 border-t border-gray-100 dark:border-gray-800">
-              <button
-                onClick={() => setIsConfigModalOpen(false)}
-                className="px-4 py-2.5 text-sm font-medium rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 transition-colors"
-              >
-                关闭
-              </button>
-              {configModalMode === "slim_export" ? (
-                <button
-                  onClick={async () => {
-                    if (!configPayload) return;
-                    try {
-                      await navigator.clipboard.writeText(configPayload);
-                      setConfigCopied(true);
-                      setTimeout(() => setConfigCopied(false), 1500);
-                    } catch {
-                      setConfigModalError("无法访问剪贴板，请手动复制。");
-                    }
-                  }}
-                  disabled={!configPayload || isExportingSlim}
-                  className="px-4 py-2.5 text-sm font-medium rounded-lg bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:hover:bg-gray-200 text-white dark:text-gray-900 transition-colors disabled:opacity-50"
-                >
-                  {configCopied ? "已复制" : "复制文本"}
-                </button>
-              ) : (
-                <button
-                  onClick={handleImportSlimText}
-                  disabled={isImportingSlim}
-                  className="px-4 py-2.5 text-sm font-medium rounded-lg bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:hover:bg-gray-200 text-white dark:text-gray-900 transition-colors disabled:opacity-50"
-                >
-                  {isImportingSlim ? "正在导入…" : "导入缺少的账户"}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
       <UpdateChecker />
 
     </div>
