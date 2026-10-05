@@ -4,7 +4,7 @@
 
 Codex 额度查询与桌面悬浮窗：查看剩余额度、Credits 余额，以及 5 小时、7 天、30 天额度重置时间，支持多账户和 Cookie 登录。
 
-English | [简体中文](README.zh-CN.md) | [Download Windows exe](../../releases)
+English | [简体中文](README.zh-CN.md) | [Download Windows exe](https://github.com/lxsxyxjh/codex-switcher/releases)
 
 ## What can you monitor?
 
@@ -30,7 +30,7 @@ Only quota periods returned for the account are shown. Missing periods are omitt
 
 ## Download and start
 
-1. Download `codex-switcher.exe` from [Releases](../../releases), place it in a permanent folder, and open it.
+1. Download `codex-switcher.exe` from [Releases](https://github.com/lxsxyxjh/codex-switcher/releases), place it in a permanent folder, and open it.
 2. Select **账户 → 添加账户** (Account → Add account).
 3. Enable **悬浮额度窗** (Floating quota widget) in Settings or the tray context menu.
 4. Drag the widget to your preferred location. Right-click it for account, layout, scaling, and refresh settings.
@@ -83,6 +83,8 @@ src-tauri/target/exe-only/release/codex-switcher.exe
 ```
 
 No installer or updater signing key is required. To publish, optionally bump the version with `pnpm version:patch` before building, check the exe, and upload it to your own GitHub Release. The inherited updater still targets the original repository; use manual exe downloads unless you configure your own update service. Development: `pnpm tauri:win dev`.
+
+GitHub Actions can also build the exe: push a version tag matching `package.json` (for example `v0.2.21`), or run **Windows EXE Release** with an existing tag. It builds Windows only and uploads the exe to a Release draft. Review the draft and click **Publish release**. Existing exe attachments are preserved. No signing secrets are needed.
 
 ## Original project and scope
 

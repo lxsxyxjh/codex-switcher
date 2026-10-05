@@ -1,4 +1,4 @@
-name: Build & Release
+name: Windows EXE Release
 
 on:
   push:
@@ -6,112 +6,87 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Version tag (e.g., v1.0.0)'
+      tag:
+        description: 'Existing version tag, for example v0.2.21'
         required: true
         type: string
-      release_note:
-        description: 'Short release note shown in the update prompt'
-        required: true
-        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  publish:
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: macos-latest
-            target: aarch64-apple-darwin
-            name: macos-arm64
-          - platform: macos-latest
-            target: x86_64-apple-darwin
-            name: macos-x64
-          - platform: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            name: linux-x64
-          - platform: windows-latest
-            target: x86_64-pc-windows-msvc
-            name: windows-x64
-
-    runs-on: ${{ matrix.platform }}
-
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      - name: Checkout
+      - name: Checkout version
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+      - name: Check version tag
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$' -or $env:RELEASE_TAG -ne "v$version") {
+            throw "The tag must match the package version: v$version"
+          }
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 9
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          targets: ${{ matrix.target }}
+          node-version: 22
+          cache: pnpm
 
-      - name: Install dependencies (Ubuntu)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target/exe-only
 
       - name: Install frontend dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
-      - name: Determine tag
-        id: tag
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-          fi
+      - name: Build Windows exe
+        run: pnpm tauri:win:exe
 
-      - name: Determine release note
-        id: release_note
-        shell: bash
-        env:
-          INPUT_RELEASE_NOTE: ${{ inputs.release_note }}
-          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            note="$INPUT_RELEASE_NOTE"
-          else
-            remote_tag_ref="refs/release-tags/$RELEASE_TAG"
-            git fetch --force --no-tags origin "refs/tags/$RELEASE_TAG:$remote_tag_ref"
-            note="$(git for-each-ref --format='%(contents)' "$remote_tag_ref")"
-          fi
-          {
-            echo 'note<<RELEASE_NOTE_EOF'
-            echo "$note"
-            echo 'RELEASE_NOTE_EOF'
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Build and release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Save build artifact
+        uses: actions/upload-artifact@v4
         with:
-          tagName: ${{ steps.tag.outputs.tag }}
-          releaseName: ${{ steps.tag.outputs.tag }}
-          releaseBody: ${{ steps.release_note.outputs.note }}
-          generateReleaseNotes: true
-          releaseDraft: false
-          prerelease: false
-          includeUpdaterJson: true
-          updaterJsonKeepUniversal: true
-          retryAttempts: 3
-          args: --target ${{ matrix.target }}
+          name: codex-switcher-windows-x64-${{ env.RELEASE_TAG }}
+          path: src-tauri/target/exe-only/release/codex-switcher.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload exe to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseJson = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json assets 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $release = $releaseJson | ConvertFrom-Json
+            if ($release.assets.name -contains 'codex-switcher.exe') {
+              Write-Output 'This release already has an exe; the existing download is preserved.'
+              exit 0
+            }
+          } else {
+            gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --verify-tag --draft --title "$env:RELEASE_TAG — Windows Codex Quota & Credits Monitor" --notes 'Windows x64 Codex quota, Credits balance and floating widget. Windows Codex 额度与余额悬浮窗。Download codex-switcher.exe. Requires WebView2. Based on Lampese/codex-switcher.'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create the release draft.' }
+          }
+          gh release upload $env:RELEASE_TAG 'src-tauri/target/exe-only/release/codex-switcher.exe' --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw 'Could not upload the exe.' }

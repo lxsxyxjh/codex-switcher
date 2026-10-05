@@ -4,7 +4,7 @@
 
 Windows Codex usage monitor / quota monitor：查看 5 小时、7 天和 30 天限额，在桌面悬浮窗和系统托盘同步显示。
 
-[English](README.md) | 简体中文 | [下载 Windows exe](../../releases)
+[English](README.md) | 简体中文 | [下载 Windows exe](https://github.com/lxsxyxjh/codex-switcher/releases)
 
 ## 能查看什么？
 
@@ -30,7 +30,7 @@ Windows Codex usage monitor / quota monitor：查看 5 小时、7 天和 30 天�
 
 ## 下载和使用
 
-1. 从 [Releases](../../releases) 下载 `codex-switcher.exe`，放到长期保留的文件夹，双击运行。
+1. 从 [Releases](https://github.com/lxsxyxjh/codex-switcher/releases) 下载 `codex-switcher.exe`，放到长期保留的文件夹，双击运行。
 2. 点击 **账户 → 添加账户**。
 3. 在设置或托盘右键菜单开启 **悬浮额度窗**。
 4. 将悬浮窗拖到合适的位置，右键选择账户、排列方式、缩放比例和更新间隔。
@@ -83,6 +83,8 @@ src-tauri/target/exe-only/release/codex-switcher.exe
 ```
 
 不需要安装包或 updater 签名密钥。发版时可先用 `pnpm version:patch` 调整版本，编译并检查 exe，再上传到自己的 GitHub Release。继承的更新器仍指向原作者仓库；未配置自己的更新服务前，通过手动下载 exe 更新。开发调试：`pnpm tauri:win dev`。
+
+也可以使用 GitHub Actions 自动打包：推送与 `package.json` 版本一致的标签（例如 `v0.2.21`），或在 **Windows EXE Release** 中输入已有标签运行。只编译 Windows，并把 exe 上传到 Release 草稿；检查草稿后点击 **Publish release**。已有 exe 附件不会被覆盖，不需要配置签名密钥。
 
 ## 原项目和本版本范围
 
