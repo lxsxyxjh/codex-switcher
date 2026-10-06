@@ -1,7 +1,7 @@
 {
   "name": "codex-switcher",
   "private": true,
-  "version": "0.2.21",
+  "version": "0.2.22",
   "description": "A Windows Codex quota and Credits monitor",
   "type": "module",
   "scripts": {

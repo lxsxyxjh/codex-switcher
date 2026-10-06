@@ -34,6 +34,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            api::usage::write_usage_log(&format!("程序启动 pid={} version={}", std::process::id(), env!("CARGO_PKG_VERSION")));
             #[cfg(desktop)]
             {
                 app.handle()
@@ -44,6 +45,9 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed) {
+                api::usage::write_usage_log(&format!("窗口生命周期 label={} event={event:?}", window.label()));
+            }
             #[cfg(desktop)]
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -108,6 +112,15 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {
+            match &_event {
+                tauri::RunEvent::ExitRequested { code, api, .. } => {
+                    api::usage::write_usage_log(&format!("程序退出请求 pid={} code={code:?}", std::process::id()));
+                    // 常驻托盘程序只响应明确退出命令，窗口关闭不应结束进程。
+                    if code.is_none() { api.prevent_exit(); }
+                }
+                tauri::RunEvent::Exit => api::usage::write_usage_log(&format!("程序退出 pid={}", std::process::id())),
+                _ => {}
+            }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = _event {
                 commands::restore_main_window(_app);

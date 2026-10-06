@@ -589,7 +589,10 @@ fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
             });
         }
         OPEN_ITEM_ID => show_main_window(app),
-        QUIT_ITEM_ID => app.exit(0),
+        QUIT_ITEM_ID => {
+            crate::api::usage::write_usage_log("用户退出：托盘右键退出程序");
+            app.exit(0);
+        }
         _ => {
             let Some(account_id) = item_id.strip_prefix(ACCOUNT_ITEM_PREFIX) else {
                 return;

@@ -323,6 +323,7 @@ pub fn restore_main_window<R: Runtime>(app: &AppHandle<R>) {
 /// Quit the whole application from the tray.
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
+    crate::api::usage::write_usage_log("用户退出：托盘弹窗退出程序");
     app.exit(0);
 }
 

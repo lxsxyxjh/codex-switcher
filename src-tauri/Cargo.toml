@@ -1,6 +1,6 @@
 [package]
 name = "codex-switcher"
-version = "0.2.21"
+version = "0.2.22"
 description = "A Windows Codex quota and Credits monitor"
 authors = ["lampese"]
 edition = "2021"
