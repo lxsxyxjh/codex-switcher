@@ -640,6 +640,8 @@ impl AccountInfo {
 pub struct UsageInfo {
     #[serde(default)]
     pub fetched_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub attempted_at: Option<DateTime<Utc>>,
     /// Account ID
     pub account_id: String,
     /// Plan type
@@ -671,6 +673,7 @@ impl UsageInfo {
         if self.error.is_some() {
             if let Some(previous) = previous.filter(|previous| previous.account_id == self.account_id) {
                 let mut retained = previous.clone();
+                retained.attempted_at = self.attempted_at;
                 retained.error = self.error;
                 return retained;
             }
@@ -681,6 +684,7 @@ impl UsageInfo {
     pub fn error(account_id: String, error: String) -> Self {
         Self {
             fetched_at: None,
+            attempted_at: Some(Utc::now()),
             account_id,
             plan_type: None,
             primary_used_percent: None,
@@ -765,12 +769,16 @@ mod tests {
     fn usage_failure_preserves_values_and_success_clears_stale_status() {
         let mut previous = super::UsageInfo::error("first".into(), "old".into());
         previous.error = None;
+        previous.fetched_at = Some(Utc.with_ymd_and_hms(2026, 10, 6, 1, 0, 0).unwrap());
+        previous.attempted_at = previous.fetched_at;
         previous.primary_used_percent = Some(100.0);
         previous.credits_balance = Some("0".into());
         let failed = super::UsageInfo::error("first".into(), "offline".into()).retain_previous_on_error(Some(&previous));
         assert_eq!(failed.primary_used_percent, Some(100.0));
         assert_eq!(failed.credits_balance.as_deref(), Some("0"));
         assert_eq!(failed.error.as_deref(), Some("offline"));
+        assert_eq!(failed.fetched_at, previous.fetched_at);
+        assert!(failed.attempted_at > previous.attempted_at);
         let healthy = previous.clone().retain_previous_on_error(Some(&failed));
         assert!(healthy.error.is_none());
         let different = super::UsageInfo::error("second".into(), "offline".into()).retain_previous_on_error(Some(&previous));

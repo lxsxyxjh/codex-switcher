@@ -96,6 +96,8 @@ export function AccountCard({
   const fetchedAt = account.usage?.fetched_at;
   const refreshDate = fetchedAt ? new Date(fetchedAt) : null;
   const lastRefresh = refreshDate && Number.isFinite(refreshDate.getTime()) ? refreshDate : null;
+  const attemptDate = account.usage?.attempted_at ? new Date(account.usage.attempted_at) : null;
+  const lastAttempt = attemptDate && Number.isFinite(attemptDate.getTime()) ? attemptDate : null;
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(account.name);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -239,7 +241,10 @@ export function AccountCard({
         <UsageBar usage={account.usage} loading={isRefreshing || account.usageLoading} now={now} />
         <div className="mt-3 grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2 text-xs">
         {isTauriRuntime() && <label className="inline-block text-xs text-gray-500">{autoRefreshActive ? "自动刷新（悬浮窗显示中）" : "仅手动刷新"} {autoRefreshActive && <select aria-label={`${account.name}自动刷新间隔`} value={refreshInterval} disabled={intervalSaving} onChange={(event) => { void changeInterval(Number(event.target.value)); }} className="ml-2 rounded-lg border border-gray-200 bg-transparent px-2 py-1 dark:border-gray-700">{usageRefreshIntervals.map(({ seconds, label }) => <option key={seconds} value={seconds}>{label}</option>)}</select>}</label>}
-        <span className="text-gray-400 dark:text-gray-500">最近更新：{formatLastRefresh(lastRefresh)}{lastRefresh && ` · 距现在 ${Math.max(0, Math.floor((now - lastRefresh.getTime()) / 1000))} 秒`}</span>
+        <div className="grid gap-1 text-gray-400 dark:text-gray-500">
+          <span>最近成功：{formatLastRefresh(lastRefresh)}{lastRefresh && ` · 距现在 ${Math.max(0, Math.floor((now - lastRefresh.getTime()) / 1000))} 秒`}</span>
+          <span>最近尝试：{formatLastRefresh(lastAttempt)}{lastAttempt && ` · 距现在 ${Math.max(0, Math.floor((now - lastAttempt.getTime()) / 1000))} 秒`}{lastAttempt && (account.usage?.error ? " · 失败" : " · 成功")}</span>
+        </div>
         </div>
         {intervalError && <p role="alert" className="text-xs text-red-500">{intervalError}</p>}
       </div>

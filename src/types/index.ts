@@ -17,6 +17,7 @@ export interface AccountInfo {
 
 export interface UsageInfo {
   fetched_at?: string | null;
+  attempted_at?: string | null;
   account_id: string;
   plan_type: string | null;
   primary_used_percent: number | null;

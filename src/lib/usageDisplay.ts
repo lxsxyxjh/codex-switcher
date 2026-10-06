@@ -3,8 +3,17 @@ import type { AccountInfo, UsageInfo } from "../types";
 export function mergeUsageUpdate(previous: UsageInfo | undefined, update: UsageInfo): UsageInfo {
   if (previous?.account_id === update.account_id && previous.fetched_at && update.fetched_at && Date.parse(update.fetched_at) < Date.parse(previous.fetched_at)) return previous;
   return update.error && previous?.account_id === update.account_id
-    ? { ...previous, error: update.error }
+    ? { ...previous, attempted_at: update.attempted_at, error: update.error }
     : update;
+}
+
+export function formatUsageError(error: string): string {
+  if (/refresh_token_reused/i.test(error)) return "登录凭证已被使用，无法续期，请重新登录此账户（401，refresh_token_reused）。";
+  if (/401|Unauthorized|Missing refresh token|invalid_grant|refresh_token_expired|refresh_token_invalid/i.test(error)) return "登录凭证已失效或不完整，请重新登录此账户。错误详情：" + error;
+  if (/403|Forbidden/i.test(error)) return "服务拒绝访问，请检查网络或账户访问权限。错误详情：" + error;
+  if (/429|Too Many Requests/i.test(error)) return "请求过于频繁，请稍后重试。错误详情：" + error;
+  if (/timeout|timed out/i.test(error)) return "请求超时，请检查网络连接后重试。错误详情：" + error;
+  return "刷新失败：" + error;
 }
 
 export function getDisplayedUsageWindows(usage: Pick<UsageInfo, "primary_used_percent" | "primary_window_minutes" | "secondary_used_percent" | "secondary_window_minutes"> | undefined) {

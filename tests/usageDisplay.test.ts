@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatCreditsBalance, formatQuotaResetTime, formatUsagePercent, formatUsageWindowLabel, getDisplayedUsageWindows, mergeUsageUpdate } from "../src/lib/usageDisplay.ts";
+import { formatCreditsBalance, formatQuotaResetTime, formatUsagePercent, formatUsageWindowLabel, getDisplayedUsageWindows, mergeUsageUpdate, formatUsageError } from "../src/lib/usageDisplay.ts";
 import type { UsageInfo } from "../src/types/index.ts";
 
 test("refresh failures retain credits including zero without crossing account identities", () => {
   const previous: UsageInfo = { fetched_at: "2026-10-06T01:00:00Z", account_id: "first", plan_type: "plus", primary_used_percent: 100, primary_window_minutes: 300, primary_resets_at: null, secondary_used_percent: null, secondary_window_minutes: null, secondary_resets_at: null, has_credits: true, unlimited_credits: false, credits_balance: "0", error: null };
-  const failed = { ...previous, primary_used_percent: null, credits_balance: null, error: "offline" };
+  const failed = { ...previous, attempted_at: "2026-10-06T01:02:00Z", primary_used_percent: null, credits_balance: null, error: "offline" };
   const retained = mergeUsageUpdate(previous, failed);
   assert.equal(retained.credits_balance, "0");
   assert.equal(retained.primary_used_percent, 100);
   assert.equal(retained.error, "offline");
   assert.equal(retained.fetched_at, previous.fetched_at);
+  assert.equal(retained.attempted_at, failed.attempted_at);
   assert.equal(mergeUsageUpdate(previous, { ...previous, fetched_at: "2026-10-06T00:59:00Z", credits_balance: "99" }), previous);
   assert.equal(mergeUsageUpdate(previous, { ...previous, account_id: "second", fetched_at: "2026-10-06T00:59:00Z" }).account_id, "second");
   assert.equal(mergeUsageUpdate(retained, previous).error, null);
@@ -71,4 +72,12 @@ test("reset dates include the year when needed and handle expired or invalid val
   assert.equal(formatQuotaResetTime(reset / 1000, reset - 1000), "1月2日 20:59（约不到1分钟后）");
   assert.equal(formatQuotaResetTime(null, now), "");
   assert.equal(formatQuotaResetTime(NaN, now), "");
+});
+
+test("explains credential failures and preserves details for other errors", () => {
+  assert.match(formatUsageError("Token refresh failed: API error: 401 Unauthorized; error_code=refresh_token_reused"), /请重新登录此账户.*refresh_token_reused/);
+  assert.match(formatUsageError("API error: 401 Unauthorized"), /请重新登录.*401 Unauthorized/);
+  assert.match(formatUsageError("request timed out"), /请求超时/);
+  assert.match(formatUsageError("API error: 429 Too Many Requests"), /请求过于频繁/);
+  assert.match(formatUsageError("connection reset"), /connection reset/);
 });

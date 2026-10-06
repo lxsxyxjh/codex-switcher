@@ -42,7 +42,7 @@ pub async fn fetch_usage(account_id: &str) -> Result<UsageInfo, String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Account not found: {account_id}"))?;
 
-    get_account_usage(&account).await.map_err(|e| e.to_string())
+    get_account_usage(&account).await.map_err(|e| format!("{e:#}"))
 }
 
 /// Get usage info for a specific account

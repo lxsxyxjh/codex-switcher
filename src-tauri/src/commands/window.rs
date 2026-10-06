@@ -98,6 +98,9 @@ pub fn set_usage_refresh_interval(app: AppHandle, account_id: String, seconds: u
     }
     let mut settings = load_app_settings().map_err(|error| error.to_string())?;
     if !load_accounts().map_err(|error| error.to_string())?.accounts.iter().any(|account| account.id == account_id) { return Err("账户不存在".into()); }
+    if settings.account_usage_refresh_intervals.get(&account_id).copied().unwrap_or(300) == seconds {
+        return Ok(());
+    }
     if seconds == 300 { settings.account_usage_refresh_intervals.remove(&account_id); }
     else { settings.account_usage_refresh_intervals.insert(account_id.clone(), seconds); }
     save_app_settings(&settings).map_err(|error| error.to_string())?;
@@ -107,6 +110,11 @@ pub fn set_usage_refresh_interval(app: AppHandle, account_id: String, seconds: u
         crate::tray::refresh(&app);
     }
     let _ = app.emit("app-settings-changed", ());
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = crate::commands::get_usage(app, account_id, Some("修改自动刷新间隔".into())).await {
+            eprintln!("Failed to refresh usage after changing interval: {error}");
+        }
+    });
     Ok(())
 }
 

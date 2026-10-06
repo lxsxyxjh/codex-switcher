@@ -1,5 +1,5 @@
 import type { UsageInfo } from "../types";
-import { formatCreditsBalance, formatQuotaResetTime, formatUsagePercent } from "../lib/usageDisplay";
+import { formatCreditsBalance, formatQuotaResetTime, formatUsagePercent, formatUsageError } from "../lib/usageDisplay";
 
 interface UsageBarProps {
   usage?: UsageInfo;
@@ -87,12 +87,9 @@ export function UsageBar({ usage, loading, now }: UsageBarProps) {
   const hasSecondary = typeof usage.secondary_used_percent === "number" && Number.isFinite(usage.secondary_used_percent);
   const hasCredits = usage.credits_balance != null && usage.credits_balance.trim() !== "";
   const errorNotice = usage.error ? (
-      <div title={usage.error} className="text-xs text-amber-600 dark:text-amber-400 py-1">
-        {hasPrimary || hasSecondary || hasCredits ? "刷新失败，显示上次成功的额度。" : usage.error
-          .replace(/^API error:\s*/i, "接口错误：")
-          .replace(/Unauthorized/gi, "未授权")
-          .replace(/Forbidden/gi, "禁止访问")
-          .replace(/Not Found/gi, "未找到")}
+      <div role="alert" className="break-words text-xs text-amber-600 dark:text-amber-400 py-1">
+        <p>{formatUsageError(usage.error)}</p>
+        {(hasPrimary || hasSecondary || hasCredits) && <p className="mt-1">当前显示上次成功获取的额度。</p>}
       </div>
     ) : null;
 

@@ -23,6 +23,7 @@ export function useAccounts() {
   const buildUsageError = useCallback(
     (accountId: string, message: string, planType: string | null): UsageInfo => ({
       account_id: accountId,
+      attempted_at: new Date().toISOString(),
       plan_type: planType,
       primary_used_percent: null,
       primary_window_minutes: null,

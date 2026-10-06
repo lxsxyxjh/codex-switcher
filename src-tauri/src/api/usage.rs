@@ -95,7 +95,7 @@ pub(crate) async fn log_http_failure(account_id: &str, response: reqwest::Respon
         Err(error) => format!("response_read_error={error}"),
     };
     write_usage_log(&format!("HTTP失败 account={account_id} endpoint={endpoint} status={status} request_id={request_id} cf_ray={ray} retry_after={retry_after} content_type={content_type} {details}"));
-    format!("API error: {status}")
+    format!("API error: {status}; {details}")
 }
 
 fn diagnostic_text(text: &str) -> String {
@@ -150,6 +150,7 @@ pub async fn get_account_usage(account: &StoredAccount) -> Result<UsageInfo> {
     let result = match &account.auth_data {
         AuthData::ApiKey { .. } => Ok(UsageInfo {
             fetched_at: None,
+            attempted_at: Some(Utc::now()),
             account_id: account.id.clone(),
             plan_type: Some("api_key".to_string()),
             primary_used_percent: None,
@@ -528,6 +529,7 @@ fn convert_payload_to_usage_info(account_id: &str, payload: RateLimitStatusPaylo
 
     UsageInfo {
         fetched_at: Some(Utc::now()),
+        attempted_at: Some(Utc::now()),
         account_id: account_id.to_string(),
         plan_type: Some(payload.plan_type),
         primary_used_percent: primary.as_ref().map(|w| w.used_percent),
