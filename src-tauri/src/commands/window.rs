@@ -10,6 +10,67 @@ use crate::{
 /// Label of the borderless tray popup window.
 pub const TRAY_WINDOW: &str = "tray";
 pub const FLOATING_USAGE_WINDOW: &str = "floating-usage";
+static USAGE_HINT: std::sync::LazyLock<std::sync::Mutex<String>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(String::new()));
+static USAGE_HINT_WINDOW_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+#[tauri::command]
+pub async fn resize_usage_hint(app: AppHandle, height: f64) -> Result<(), String> {
+    let _guard = USAGE_HINT_WINDOW_LOCK.lock().await;
+    if !height.is_finite() || !(18.0..=600.0).contains(&height) { return Err("提示窗尺寸无效".into()); }
+    if let Some(window) = app.get_webview_window("usage-hint") {
+        window.set_size(tauri::LogicalSize::new(440.0, height.ceil())).map_err(|error| error.to_string())?;
+        if window.is_visible().map_err(|error| error.to_string())? { position_usage_hint(&app, &window)?; }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_usage_hint() -> String {
+    USAGE_HINT.lock().map(|text| text.clone()).unwrap_or_default()
+}
+
+#[tauri::command]
+pub async fn show_usage_hint(app: AppHandle, text: Option<String>) -> Result<(), String> {
+    let _guard = USAGE_HINT_WINDOW_LOCK.lock().await;
+    let Some(text) = text else {
+        if let Some(window) = app.get_webview_window("usage-hint") { window.hide().map_err(|error| error.to_string())?; }
+        return Ok(());
+    };
+    *USAGE_HINT.lock().map_err(|error| error.to_string())? = text.clone();
+    let window = if let Some(window) = app.get_webview_window("usage-hint") { window } else {
+        let window = tauri::WebviewWindowBuilder::new(&app, "usage-hint", tauri::WebviewUrl::App("floating.html".into()))
+            .initialization_script("window.__CODEX_USAGE_HINT__ = true;")
+            .inner_size(440.0, 120.0).decorations(false).transparent(true).shadow(false).always_on_top(true)
+            .skip_taskbar(true).resizable(false).focused(false).visible(false)
+            .build().map_err(|error| error.to_string())?;
+        window.set_ignore_cursor_events(true).map_err(|error| error.to_string())?;
+        window
+    };
+    if !window.is_visible().map_err(|error| error.to_string())? {
+        position_usage_hint(&app, &window)?;
+        window.show().map_err(|error| error.to_string())?;
+    }
+    window.emit("usage-hint-updated", text).map_err(|error| error.to_string())
+}
+
+fn position_usage_hint(app: &AppHandle, window: &tauri::WebviewWindow) -> Result<(), String> {
+        let bar = app.get_webview_window(FLOATING_USAGE_WINDOW).ok_or("悬浮窗不存在")?;
+        let position = bar.outer_position().map_err(|error| error.to_string())?;
+        let bar_size = bar.outer_size().map_err(|error| error.to_string())?;
+        let size = window.outer_size().map_err(|error| error.to_string())?;
+        let mut x = position.x;
+        let mut y = position.y + bar_size.height as i32 + 8;
+        if let Some(monitor) = bar.current_monitor().map_err(|error| error.to_string())? {
+            let area = monitor.work_area();
+            let right = area.position.x + area.size.width as i32;
+            let bottom = area.position.y + area.size.height as i32;
+            x = x.min(right - size.width as i32).max(area.position.x);
+            if y + size.height as i32 > bottom { y = position.y - size.height as i32 - 8; }
+            y = y.max(area.position.y);
+        }
+        window.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|error| error.to_string())?;
+        Ok(())
+}
 #[tauri::command]
 pub fn get_cached_usage() -> Vec<UsageInfo> {
     #[cfg(desktop)]
@@ -40,6 +101,7 @@ pub fn get_floating_usage_enabled() -> Option<bool> {
 
 #[tauri::command]
 pub async fn set_floating_usage_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    if !enabled { show_usage_hint(app.clone(), None).await?; }
     #[cfg(not(target_os = "windows"))]
     {
         let _ = (app, enabled);
@@ -198,7 +260,7 @@ pub fn resize_floating_usage(
     detect_edge: bool,
 ) -> Result<Option<String>, String> {
     for (value, limit) in [(width, 1200.0), (height, 480.0), (full_width, 1200.0), (full_height, 480.0)] {
-        if !value.is_finite() || !(16.0..=limit).contains(&value) {
+        if !value.is_finite() || !(8.0..=limit).contains(&value) {
             return Err("悬浮窗尺寸无效".into());
         }
     }
@@ -208,10 +270,13 @@ pub fn resize_floating_usage(
     let monitor = window.current_monitor().map_err(|error| error.to_string())?
         .or(app.primary_monitor().map_err(|error| error.to_string())?).ok_or("没有可用显示器")?;
     let scale = monitor.scale_factor();
-    let left = monitor.position().x;
-    let top = monitor.position().y;
-    let right = left + monitor.size().width as i32;
-    let bottom = top + monitor.size().height as i32;
+    // 贴边入口留在桌面工作区内，避免显示桌面后被任务栏覆盖。
+    // 工作区也适用于任务栏位于顶部或左右侧的显示器。
+    let area = monitor.work_area();
+    let left = area.position.x;
+    let top = area.position.y;
+    let right = left + area.size.width as i32;
+    let bottom = top + area.size.height as i32;
     let current_size = window.outer_size().map_err(|error| error.to_string())?;
     let mut dock = if settings.floating_usage_edge_hide { edge.filter(|value| ["left", "right", "top", "bottom"].contains(&value.as_str())) } else { None };
     if detect_edge && settings.floating_usage_edge_hide {
@@ -298,6 +363,17 @@ pub fn hide_tray_window(app: AppHandle) {
 #[tauri::command]
 pub fn open_main_window(app: AppHandle) {
     restore_main_window(&app);
+}
+
+#[tauri::command]
+pub fn toggle_main_window(app: AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("主界面不存在")?;
+    if window.is_visible().map_err(|error| error.to_string())? && !window.is_minimized().map_err(|error| error.to_string())? {
+        hide_main_window(&app);
+    } else {
+        restore_main_window(&app);
+    }
+    Ok(())
 }
 
 pub fn hide_main_window<R: Runtime>(app: &AppHandle<R>) {

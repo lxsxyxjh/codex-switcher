@@ -13,10 +13,17 @@ export default function App() {
   const { accounts, loading, error, loadAccounts, refreshUsage, refreshSingleUsage, deleteAccount, renameAccount, importFromFile, importFromCookie, startOAuthLogin, completeOAuthLogin, cancelOAuthLogin } = useAccounts();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    const update = () => { if (!document.hidden) setNow(Date.now()); };
-    const timer = window.setInterval(update, 1000);
-    document.addEventListener("visibilitychange", update);
-    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", update); };
+    let timer: number | undefined;
+    const syncTimer = () => {
+      window.clearInterval(timer);
+      timer = undefined;
+      if (document.hidden) return;
+      setNow(Date.now());
+      timer = window.setInterval(() => setNow(Date.now()), 1000);
+    };
+    syncTimer();
+    document.addEventListener("visibilitychange", syncTimer);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", syncTimer); };
   }, []);
   const [options, setOptions] = useState<FloatingOptions | null>(null);
   const [adding, setAdding] = useState(false);

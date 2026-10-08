@@ -876,6 +876,16 @@ fn account_for_usage_poll(store: &AccountsStore) -> Option<&StoredAccount> {
         .or_else(|| store.accounts.iter().find(|account| matches!(&account.auth_data, AuthData::Cookie { .. }))).or_else(|| store.accounts.first())
 }
 
+#[cfg(target_os = "windows")]
+fn desktop_is_foreground() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow};
+    let mut class_name = [0u16; 128];
+    // 显示桌面可能把桌面置于悬浮窗之上，只在进入桌面时恢复层级，避免持续重设窗口。
+    let length = unsafe { GetClassNameW(GetForegroundWindow(), class_name.as_mut_ptr(), class_name.len() as i32) };
+    let name = String::from_utf16_lossy(&class_name[..length.max(0) as usize]);
+    matches!(name.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd")
+}
+
 /// Only the account displayed in the enabled floating window is automatically refreshed.
 fn poll_active_account_usage<R: Runtime>(app: AppHandle<R>) {
     std::thread::spawn(move || {
@@ -885,8 +895,27 @@ fn poll_active_account_usage<R: Runtime>(app: AppHandle<R>) {
       let mut settings_modified = None;
       let mut store = AccountsStore::default();
       let mut settings = crate::types::AppSettings::default();
+      #[cfg(target_os = "windows")]
+      let mut desktop_visible = false;
       loop {
         std::thread::sleep(Duration::from_secs(1));
+        #[cfg(target_os = "windows")]
+        {
+            let current = desktop_is_foreground();
+            if current && !desktop_visible {
+                let restore_app = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    if !load_app_settings().map(|settings| settings.floating_usage_enabled).unwrap_or(false) { return; }
+                    if let Some(window) = restore_app.get_webview_window(FLOATING_USAGE_WINDOW) {
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_always_on_top(false);
+                        let _ = window.set_always_on_top(true);
+                    }
+                });
+            }
+            desktop_visible = current;
+        }
         let Ok(_refresh_guard) = USAGE_REFRESH_LOCK.try_lock() else { continue; };
         let modified = accounts_path.as_deref().and_then(modified_at);
         if modified != accounts_modified {

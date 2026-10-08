@@ -30,6 +30,7 @@ function FloatingUsage() {
   const geometryUpdateRef = useRef<(detect: boolean) => Promise<void>>(async () => {});
   const ignoreMovesUntil = useRef(0);
   const draggingRef = useRef(false);
+  const dragStart = useRef<{ x: number; y: number } | null>(null);
   const geometryQueue = useRef<Promise<void>>(Promise.resolve());
   const edgeHideEnabled = useRef<boolean | null>(null);
   const dockedEdge = useRef<string | null>(null);
@@ -43,8 +44,20 @@ function FloatingUsage() {
   const [contextOpen, setContextOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [hoverTime, setHoverTime] = useState(Date.now);
-  const menuRef = useRef<import("@tauri-apps/api/menu").Menu | null>(null);
   const [options, setOptions] = useState<FloatingOptions>({ account_usage_refresh_intervals: {}, floating_usage_enabled: false, floating_usage_scale: 100, floating_usage_account_id: null, floating_usage_show_used: false, floating_usage_vertical: false, floating_usage_edge_hide: false, floating_usage_edge: null });
+  const [hintVisible, setHintVisible] = useState(false);
+  useEffect(() => {
+    if (!options.floating_usage_enabled || !hovered || dragging || contextOpen) { setHintVisible(false); return; }
+    const timer = window.setTimeout(() => setHintVisible(true), 450);
+    return () => window.clearTimeout(timer);
+  }, [hovered, dragging, contextOpen, options.floating_usage_enabled]);
+  useEffect(() => {
+    if (!options.floating_usage_enabled || !hovered || dragging || contextOpen) return;
+    setHoverTime(Date.now());
+    const timer = window.setInterval(() => setHoverTime(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [hovered, dragging, contextOpen, options.floating_usage_enabled]);
+  const menuRef = useRef<import("@tauri-apps/api/menu").Menu | null>(null);
   const loadOptions = useCallback(async () => {
     try {
       const settings = await invokeBackend<FloatingOptions>("get_floating_usage_options");
@@ -155,8 +168,8 @@ function FloatingUsage() {
   const currentWindow = getTauriWindow();
 
   const sideEdge = edge === "left" || edge === "right";
-  const tabWidth = sideEdge ? 16 : Math.min(52, fullSize.width);
-  const tabHeight = sideEdge ? Math.min(44, fullSize.height) : 16;
+  const tabWidth = sideEdge ? 8 : Math.min(36, fullSize.width);
+  const tabHeight = sideEdge ? Math.min(32, fullSize.height) : 8;
   const collapsed = options.floating_usage_edge_hide && Boolean(edge) && !hovered && !dragging && !contextOpen;
   geometryUpdateRef.current = async (detect) => {
     const bar = barRef.current;
@@ -257,6 +270,18 @@ function FloatingUsage() {
     const resetAt = quota.key === "primary" ? usage?.primary_resets_at : usage?.secondary_resets_at;
     return `${quota.label} 额度重置：${formatQuotaResetTime(resetAt, hoverTime) || "暂无重置时间"}`;
   }).join("\n") || "暂无额度重置时间";
+  const formatRefreshHint = (timestamp: string | null | undefined) => {
+    const date = timestamp ? new Date(timestamp) : null;
+    if (!date || !Number.isFinite(date.getTime())) return "暂无记录";
+    const pad = (value: number) => String(value).padStart(2, "0");
+    const time = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    return `${time} · 距今 ${Math.max(0, Math.floor((hoverTime - date.getTime()) / 1000))} 秒`;
+  };
+  const usageHint = `${displayAccount?.name ?? "未添加账户"}\n${resetHint}\n最近成功：${formatRefreshHint(usage?.fetched_at)}\n最近尝试：${formatRefreshHint(usage?.attempted_at)}${usage?.attempted_at ? isStale ? " · 失败" : " · 成功" : ""}${isStale ? "\n刷新失败，保留上次成功数据" : ""}`;
+  useEffect(() => {
+    void invokeBackend("show_usage_hint", { text: hintVisible && options.floating_usage_enabled ? usageHint : null }).catch(console.error);
+  }, [hintVisible, usageHint, options.floating_usage_enabled]);
+  useEffect(() => () => { void invokeBackend("show_usage_hint", { text: null }).catch(console.error); }, []);
   return (
     <div onMouseEnter={() => {
       setHoverTime(Date.now());
@@ -278,10 +303,14 @@ function FloatingUsage() {
       }, 100);
       hoverLeaveTimer.current = timer;
     }}>
-    {collapsed && <div title={resetHint} className="grid place-items-center rounded-lg border border-slate-400 bg-slate-200 text-xs text-slate-600 dark:bg-slate-700 dark:text-slate-200" style={{ width: tabWidth, height: tabHeight }} onContextMenu={(event) => { event.preventDefault(); void showContextMenu().catch(console.error); }}>{edge === "left" ? "›" : edge === "right" ? "‹" : edge === "top" ? "⌄" : "⌃"}</div>}
+    {collapsed && <div className="grid place-items-center rounded-lg border border-slate-400 bg-slate-200 text-xs text-slate-600 dark:bg-slate-700 dark:text-slate-200" style={{ width: tabWidth, height: tabHeight }} onContextMenu={(event) => { event.preventDefault(); void showContextMenu().catch(console.error); }}></div>}
     <div ref={barRef}
       onContextMenu={(event) => { event.preventDefault(); void showContextMenu().catch(console.error); }}
-      onMouseDown={(event) => { if (event.button === 0 && currentWindow) {
+      onDoubleClick={() => { void invokeBackend("toggle_main_window").catch(console.error); }}
+      onMouseDown={(event) => { if (event.button === 0) dragStart.current = { x: event.screenX, y: event.screenY }; }}
+      onMouseUp={() => { dragStart.current = null; }}
+      onMouseMove={(event) => { if (event.buttons === 1 && currentWindow && dragStart.current && Math.hypot(event.screenX - dragStart.current.x, event.screenY - dragStart.current.y) >= 4) {
+        dragStart.current = null;
         if (draggingRef.current) return;
         window.clearTimeout(hoverLeaveTimer.current);
         hoverLeaveTimer.current = undefined;
@@ -304,7 +333,6 @@ function FloatingUsage() {
           }
         })().catch(console.error);
       } }}
-      title={`${displayAccount?.name ?? "未添加账户"}\n${resetHint}${isStale ? "\n刷新失败，保留上次成功数据" : ""}\n右键设置`}
       className="select-none border border-slate-300/80 bg-slate-100/95 text-slate-600 dark:border-slate-600/80 dark:bg-slate-800/95 dark:text-slate-200"
       style={{ display: "inline-grid", position: collapsed ? "absolute" : "relative", visibility: collapsed ? "hidden" : "visible", pointerEvents: collapsed ? "none" : "auto", gridTemplateColumns: options.floating_usage_vertical ? "max-content" : `repeat(${usageWindows.length + 2}, max-content)`, alignItems: "center", width: "max-content", gap: 10 * scale, padding: `${8 * scale}px ${10 * scale}px`, fontSize: 12 * scale, lineHeight: 1.5, borderRadius: 10 * scale }}
     >
@@ -314,6 +342,7 @@ function FloatingUsage() {
       <button type="button" aria-label="刷新当前账户额度" title={refreshing ? "正在刷新额度…" : isStale ? "刷新失败，显示上次成功数据。点击重新刷新" : "立即更新额度数据"}
         disabled={refreshing || !displayAccount}
         onMouseDown={(event) => event.stopPropagation()}
+        onDoubleClick={(event) => event.stopPropagation()}
         onClick={() => { void refreshUsage().catch(console.error); }}
         className="grid place-items-center rounded-lg border-0 bg-transparent text-slate-500 hover:bg-slate-200 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-700"
         style={{ width: Math.max(24, 24 * scale), height: Math.max(24, 24 * scale), fontSize: Math.max(14, 16 * scale) }}>
