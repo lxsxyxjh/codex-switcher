@@ -21,16 +21,29 @@ function UsageHint() {
   React.useEffect(() => {
     let disposed = false;
     let stop: (() => void) | undefined;
+    let visibilityHandler: (() => void) | undefined;
     let received = false;
     void (async () => {
       const { listen } = await import("@tauri-apps/api/event");
       const { invokeBackend } = await import("./lib/platform");
+      const syncText = async () => {
+        try {
+          const value = await invokeBackend<string>("get_usage_hint");
+          if (!disposed) setText(value);
+        } catch (error) {
+          console.error("Failed to restore usage hint:", error);
+        }
+      };
       stop = await listen<string>("usage-hint-updated", ({ payload }) => { received = true; syncThemeFromStorage(); setText(payload); });
-      if (disposed) { stop(); return; }
+      visibilityHandler = () => {
+        if (!document.hidden) void syncText();
+      };
+      document.addEventListener("visibilitychange", visibilityHandler);
+      if (disposed) { stop(); document.removeEventListener("visibilitychange", visibilityHandler); return; }
       const initial = await invokeBackend<string>("get_usage_hint");
       if (!disposed && !received) setText(initial);
     })().catch(console.error);
-    return () => { disposed = true; stop?.(); };
+    return () => { disposed = true; stop?.(); if (visibilityHandler) document.removeEventListener("visibilitychange", visibilityHandler); };
   }, []);
   return <div ref={contentRef} className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs leading-5 whitespace-pre-wrap text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">{text}</div>;
 }

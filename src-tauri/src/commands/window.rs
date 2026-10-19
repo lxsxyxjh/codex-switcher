@@ -46,10 +46,9 @@ pub async fn show_usage_hint(app: AppHandle, text: Option<String>) -> Result<(),
         window.set_ignore_cursor_events(true).map_err(|error| error.to_string())?;
         window
     };
-    if !window.is_visible().map_err(|error| error.to_string())? {
-        position_usage_hint(&app, &window)?;
-        window.show().map_err(|error| error.to_string())?;
-    }
+    position_usage_hint(&app, &window)?;
+    window.set_always_on_top(true).map_err(|error| error.to_string())?;
+    window.show().map_err(|error| error.to_string())?;
     window.emit("usage-hint-updated", text).map_err(|error| error.to_string())
 }
 

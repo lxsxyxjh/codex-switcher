@@ -33,6 +33,7 @@ const USAGE_UPDATED_EVENT: &str = "usage-updated";
 const ACCOUNTS_CHANGED_EVENT: &str = "accounts-changed";
 const ACCOUNT_ITEM_PREFIX: &str = "account:";
 const OPEN_ITEM_ID: &str = "open";
+const RESTART_ITEM_ID: &str = "restart";
 const QUIT_ITEM_ID: &str = "quit";
 #[cfg(target_os = "windows")]
 const FLOATING_ITEM_ID: &str = "floating";
@@ -532,6 +533,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, store: &AccountsStore) -> tauri::R
     #[cfg(target_os = "macos")]
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     menu.append(&MenuItemBuilder::with_id(OPEN_ITEM_ID, "打开主界面").build(app)?)?;
+    menu.append(&MenuItemBuilder::with_id(RESTART_ITEM_ID, "重启程序").build(app)?)?;
     menu.append(&MenuItemBuilder::with_id(QUIT_ITEM_ID, "退出程序").build(app)?)?;
     Ok(menu)
 }
@@ -589,6 +591,10 @@ fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
             });
         }
         OPEN_ITEM_ID => show_main_window(app),
+        RESTART_ITEM_ID => {
+            crate::api::usage::write_usage_log("用户重启：托盘右键重启程序");
+            app.restart();
+        }
         QUIT_ITEM_ID => {
             crate::api::usage::write_usage_log("用户退出：托盘右键退出程序");
             app.exit(0);
